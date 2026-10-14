@@ -1,494 +1,556 @@
 import SwiftUI
 import Charts
 
+// Shared surfaces stay neutral so color carries meaning, rather than decorating every row.
+private enum PowerUI {
+    static let mint = Color(red: 0.16, green: 0.66, blue: 0.46)
+    static let blue = Color(red: 0.24, green: 0.51, blue: 0.88)
+    static let orange = Color(red: 0.87, green: 0.40, blue: 0.14)
+
+    static func intensity(_ watts: Double) -> Color {
+        switch abs(watts) {
+        case ..<10: return mint
+        case ..<20: return Color(red: 0.72, green: 0.52, blue: 0.10)
+        case ..<40: return orange
+        default: return .red
+        }
+    }
+
+    static func watts(_ value: Double, available: Bool, signed: Bool = false) -> String {
+        guard available else { return "—" }
+        return String(format: signed ? "%+.1f" : "%.1f", abs(value) < 0.05 ? 0 : value)
+    }
+}
+
 enum PopoverTab: String, CaseIterable, Identifiable {
-    case flow = "Flow"
-    case health = "Health"
-    case bms = "BMS & PD"
-    case alerts = "Alerts"
-    case raw = "Raw"
-    
+    case flow = "Power"
+    case health = "Battery"
+    case bms = "Hardware"
+    case alerts = "Settings"
+    case raw = "Inspector"
+
     var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .flow: return "waveform.path"
+        case .health: return "heart"
+        case .bms: return "cpu"
+        case .alerts: return "slider.horizontal.3"
+        case .raw: return "curlybraces"
+        }
+    }
 }
 
 struct JuicyMenuView: View {
     @ObservedObject var service: BatteryService
     @State private var selectedTab: PopoverTab = .flow
-    @State private var rawSearch: String = ""
-    
+    @State private var rawSearch = ""
+
     var body: some View {
-        let s = service.snapshot
-        
-        VStack(alignment: .leading, spacing: 12) {
-            // 1. Top Header: Ring + Percentage + Status Badge
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.primary.opacity(0.12), lineWidth: 5)
-                        .frame(width: 44, height: 44)
-                    Circle()
-                        .trim(from: 0, to: CGFloat(s.percentage) / 100.0)
-                        .stroke(statusColor(for: s.powerState), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 44, height: 44)
-                    Text("\(s.percentage)%")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                }
-                
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(PowerUI.mint)
+                    .frame(width: 34, height: 34)
+                    .background(PowerUI.mint.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("\(s.percentage)%")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                        Text(String(format: "(%.1f%%)", s.rawStateOfCharge))
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+                    Text("Battery Monitor").font(.system(size: 14, weight: .semibold))
+                    Text("Your Mac, at a glance").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { selectedTab = selectedTab == .alerts ? .flow : .alerts } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 32, height: 32)
+                        .background(selectedTab == .alerts ? PowerUI.mint.opacity(0.12) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(selectedTab == .alerts ? PowerUI.mint : .secondary)
+                .accessibilityLabel("Settings")
+                .help("Settings and alerts")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+
+            HStack(spacing: 4) {
+                ForEach([PopoverTab.flow, .health, .bms]) { tab in
+                    Button { selectedTab = tab } label: {
+                        Label(tab.rawValue, systemImage: tab.symbol)
+                            .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .foregroundStyle(selectedTab == tab ? Color.primary : .secondary)
+                            .background(selectedTab == tab ? Color(nsColor: .controlBackgroundColor) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay {
+                                if selectedTab == tab {
+                                    RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.06))
+                                }
+                            }
                     }
-                    Text(timeSubtitle(s))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                Text(s.powerState.rawValue)
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(statusColor(for: s.powerState).opacity(0.18))
-                    .foregroundStyle(statusColor(for: s.powerState))
-                    .clipShape(Capsule())
-            }
-            
-            // 2. Three Primary Live Metric Boxes (No Truncation)
-            HStack(spacing: 8) {
-                PopoverMetricCard(
-                    title: s.liveWatts >= 0 ? "Battery Charge" : "Battery Draw",
-                    value: String(format: "%+.1f W", s.liveWatts),
-                    sub: String(format: "%+.1f%%/hr", s.chargeRatePercentPerHour),
-                    color: s.liveWatts >= 0 ? .green : .orange
-                )
-                PopoverMetricCard(
-                    title: "System Load",
-                    value: String(format: "%.1f W", s.systemLoadWatts),
-                    sub: s.adapterWatts > 0 ? "Brick: \(s.adapterWatts)W" : "On Battery",
-                    color: .blue
-                )
-                PopoverMetricCard(
-                    title: "Battery Temp",
-                    value: s.temperatureCelsius > 0 ? String(format: "%.1f °C", s.temperatureCelsius) : "—",
-                    sub: s.isThermalWarning ? "High Temp!" : "Nominal",
-                    color: s.isThermalWarning ? .red : .primary
-                )
-            }
-            
-            // 3. Segmented Tab Bar inside Menu Bar Popover
-            Picker("", selection: $selectedTab) {
-                ForEach(PopoverTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            
-            Divider()
-            
-            // 4. Tab Content Area
-            Group {
-                switch selectedTab {
-                case .flow:
-                    PopoverFlowTab(service: service)
-                case .health:
-                    PopoverHealthTab(s: s)
-                case .bms:
-                    PopoverBMSTab(s: s)
-                case .alerts:
-                    PopoverAlertsTab(service: service)
-                case .raw:
-                    PopoverRawTab(pairs: service.rawRegistryPairs, search: $rawSearch)
+            .padding(4)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !service.snapshot.hasBattery {
+                        ContentUnavailableView("No battery detected", systemImage: "powerplug", description: Text("Battery monitoring is available on Macs with a built-in battery."))
+                    } else {
+                        switch selectedTab {
+                        case .flow: PopoverFlowTab(service: service)
+                        case .health: PopoverHealthTab(s: service.snapshot)
+                        case .bms:
+                            PopoverBMSTab(s: service.snapshot)
+                            Button { selectedTab = .raw } label: {
+                                HStack {
+                                    Label("Open raw data inspector", systemImage: "curlybraces")
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption2)
+                                }
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(14)
+                                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        case .alerts: PopoverAlertsTab(service: service)
+                        case .raw: PopoverRawTab(pairs: service.rawRegistryPairs, search: $rawSearch)
+                        }
+                    }
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
-            Divider()
-            
-            // 5. Footer
-            HStack {
-                Button {
-                    service.refresh()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                        .font(.caption)
-                }
-                .buttonStyle(.link)
-                
-                Spacer()
-                
-                Text("\(s.voltageMV) mV • \(s.amperageMA) mA")
-                    .font(.caption2.monospaced())
+            .scrollIndicators(.automatic)
+
+            Divider().opacity(0.5)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(service.snapshot.powerReadingAvailable ? PowerUI.mint : Color.secondary)
+                    .frame(width: 5, height: 5)
+                Text(service.snapshot.powerReadingSource)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
-                
                 Spacer()
-                
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
+                Button { service.refresh() } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 26, height: 26)
                 }
-                .buttonStyle(.link)
-                .font(.caption)
-                .foregroundStyle(.red)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Refresh battery data")
+                .help("Refresh now")
+                Menu {
+                    Button("Raw data inspector") { selectedTab = .raw }
+                    Button("Quit Battery Monitor") { NSApplication.shared.terminate(nil) }
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 22, height: 26)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("More options")
             }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+        }
+        .frame(width: 440, height: 700)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { service.refresh() }
+    }
+}
+
+private struct Surface<Content: View>: View {
+    let title: String?
+    @ViewBuilder let content: Content
+
+    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let title {
+                Text(title).font(.system(size: 12, weight: .semibold))
+            }
+            content
         }
         .padding(14)
-        .frame(width: 420)
-    }
-    
-    private func statusColor(for state: PowerState) -> Color {
-        switch state {
-        case .charging, .fullyCharged: return .green
-        case .pluggedInHolding: return .blue
-        case .discharging: return .orange
-        case .desktopAC, .unknown: return .secondary
-        }
-    }
-    
-    private func timeSubtitle(_ s: BatterySnapshot) -> String {
-        if let mins = s.timeRemainingMinutes {
-            let h = mins / 60
-            let m = mins % 60
-            let suffix = s.powerState == .charging ? "to full" : "left"
-            return String(format: "%dh %02dm %@ • %.1f / %.1f Wh", h, m, suffix, s.currentEnergyWH, s.maxEnergyWH)
-        }
-        if s.powerState == .pluggedInHolding {
-            return String(format: "Wall power (Bypassed) • %.1f / %.1f Wh", s.currentEnergyWH, s.maxEnergyWH)
-        }
-        return String(format: "%.1f / %.1f Wh stored", s.currentEnergyWH, s.maxEnergyWH)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 16))
+        .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.06)) }
     }
 }
 
-struct PopoverMetricCard: View {
-    let title: String
-    let value: String
-    let sub: String
-    let color: Color
-    
+private struct BatteryHero: View {
+    let s: BatterySnapshot
+    private var tint: Color {
+        guard s.powerReadingAvailable else { return .secondary }
+        return s.liveWatts >= 0 ? PowerUI.mint : PowerUI.intensity(s.liveWatts)
+    }
+    private var direction: String {
+        guard s.powerReadingAvailable else { return "Battery power" }
+        if s.liveWatts > 0.05 { return "Charging battery" }
+        if s.liveWatts < -0.05 { return "Battery draw" }
+        return "Battery idle"
+    }
+    private var status: String {
+        switch s.powerState {
+        case .charging: return "Charging"
+        case .discharging: return "On battery"
+        case .pluggedInHolding: return "Charge paused"
+        case .fullyCharged: return "Fully charged"
+        case .desktopAC: return "External power"
+        case .unknown: return "Unavailable"
+        }
+    }
+    private var subtitle: String {
+        guard s.powerReadingAvailable else { return "Waiting for a fresh reading" }
+        if let minutes = s.timeRemainingMinutes {
+            return "\(minutes / 60)h \(String(format: "%02d", minutes % 60))m \(s.powerState == .charging ? "until full" : "remaining") · Estimate"
+        }
+        switch s.powerState {
+        case .charging: return "Power flowing into your battery"
+        case .discharging: return "Powering your Mac from the battery"
+        case .fullyCharged: return "Fully charged · Running on external power"
+        case .pluggedInHolding: return "External power · Charging paused"
+        default: return "Battery telemetry"
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Text(value)
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
-                .foregroundStyle(color)
-                .lineLimit(1)
-            Text(sub)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(direction).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Label(status,
+                      systemImage: s.powerState == .discharging ? "battery.75" : "powerplug.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+            HStack(alignment: .center) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(PowerUI.watts(s.liveWatts, available: s.powerReadingAvailable, signed: true))
+                        .font(.system(size: 44, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .tracking(-1.5)
+                    Text("W").font(.system(size: 18, weight: .medium)).foregroundStyle(Color.secondary)
+                }
+                .foregroundStyle(tint)
+                Spacer()
+                ZStack {
+                    Circle().stroke(Color.primary.opacity(0.08), lineWidth: 4)
+                    Circle().trim(from: 0, to: CGFloat(min(100, max(0, s.percentage))) / 100)
+                        .stroke(tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text("\(s.percentage)%").font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                }
+                .frame(width: 54, height: 54)
+                .accessibilityLabel("Battery level \(s.percentage) percent")
+            }
+            Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(LinearGradient(colors: [tint.opacity(0.12), tint.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 18))
+        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(tint.opacity(0.17)) }
+    }
+}
+
+private struct MetricTile: View {
+    let title: String
+    let symbol: String
+    let value: String
+    let unit: String
+    var tint: Color = .primary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(title, systemImage: symbol).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(tint)
+                Text(unit).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color.primary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(11)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
-// MARK: - 1. Flow & Live Chart Tab
 struct PopoverFlowTab: View {
     @ObservedObject var service: BatteryService
-    
     var body: some View {
         let s = service.snapshot
-        VStack(alignment: .leading, spacing: 10) {
-            Text("3-WAY POWER ROUTER")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-            
-            HStack(spacing: 6) {
-                MiniFlowPill(label: "Wall In", watts: String(format: "%.1fW", s.wallInputWatts), color: .purple)
-                Image(systemName: "arrow.right")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                MiniFlowPill(label: "Mac Load", watts: String(format: "%.1fW", s.systemLoadWatts), color: .blue)
-                Image(systemName: s.liveWatts >= 0 ? "plus" : "minus")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                MiniFlowPill(label: "Battery", watts: String(format: "%+.1fW", s.liveWatts), color: s.liveWatts >= 0 ? .green : .orange)
+        BatteryHero(s: s)
+        HStack(spacing: 8) {
+            MetricTile(title: "Mac load", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), unit: "W")
+            MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius > 0 ? String(format: "%.1f", s.temperatureCelsius) : "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
+            MetricTile(title: "Stored energy", symbol: "battery.75", value: s.currentEnergyWH > 0 ? String(format: "%.1f", s.currentEnergyWH) : "—", unit: "Wh")
+        }
+        Surface("Power flow") {
+            HStack(spacing: 8) {
+                FlowNode(title: "Charger", symbol: "powerplug", value: PowerUI.watts(s.wallInputWatts, available: s.inputReadingAvailable), active: s.powerState != .discharging)
+                Image(systemName: "arrow.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
+                FlowNode(title: "Mac", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), active: true)
+                Image(systemName: s.liveWatts < 0 ? "arrow.left" : "arrow.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
+                FlowNode(title: "Battery", symbol: "battery.75", value: PowerUI.watts(abs(s.liveWatts), available: s.powerReadingAvailable), active: s.powerReadingAvailable && abs(s.liveWatts) > 0.05)
             }
-            
-            Text("LIVE POWER CHART (BATTERY vs SYSTEM LOAD)")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-            
+            Text(s.powerState == .discharging ? "Battery → Mac · Charger disconnected" : (s.liveWatts < -0.05 ? "Charger + battery → Mac" : (s.liveWatts > 0.05 ? "Charger → Mac + battery" : "Charger → Mac · Battery idle")))
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+        Surface {
+            HStack {
+                Text("Power over time").font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text("Last 2 min").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 14) {
+                ChartLegend(title: "Battery (+ in / − out)", color: PowerUI.mint)
+                ChartLegend(title: "Mac load", color: PowerUI.blue)
+            }
             if service.history.count < 2 {
-                Text("Sampling live power telemetry...")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(height: 110)
-                    .frame(maxWidth: .infinity)
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform.path").font(.title2).foregroundStyle(.tertiary)
+                    Text("Collecting power samples").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity).frame(height: 82)
             } else {
                 Chart {
-                    ForEach(service.history) { pt in
-                        LineMark(
-                            x: .value("Time", pt.timestamp),
-                            y: .value("W", pt.batteryWatts),
-                            series: .value("Type", "Battery")
-                        )
-                        .foregroundStyle(.green)
-                        
-                        LineMark(
-                            x: .value("Time", pt.timestamp),
-                            y: .value("W", pt.systemLoadWatts),
-                            series: .value("Type", "System")
-                        )
-                        .foregroundStyle(.blue)
+                    ForEach(service.history) { sample in
+                        LineMark(x: .value("Time", sample.timestamp), y: .value("Watts", sample.batteryWatts), series: .value("Series", "Battery"))
+                            .foregroundStyle(PowerUI.mint).lineStyle(StrokeStyle(lineWidth: 2))
+                        LineMark(x: .value("Time", sample.timestamp), y: .value("Watts", sample.systemLoadWatts), series: .value("Series", "Mac"))
+                            .foregroundStyle(PowerUI.blue).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                     }
-                    RuleMark(y: .value("Zero", 0))
-                        .foregroundStyle(.secondary.opacity(0.35))
-                        .lineStyle(StrokeStyle(dash: [3, 3]))
+                    RuleMark(y: .value("Zero", 0)).foregroundStyle(Color.primary.opacity(0.15))
                 }
-                .frame(height: 110)
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) {
+                        AxisGridLine().foregroundStyle(Color.primary.opacity(0.06))
+                        AxisValueLabel(anchor: .trailing).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 82)
+                .accessibilityLabel("Battery power and Mac load over the past two minutes, in watts")
             }
-            
             HStack {
-                Text(String(format: "Peak Charge: +%.1fW", service.sessionPeakChargeWatts))
+                Text(String(format: "Peak charge  +%.1f W", service.sessionPeakChargeWatts))
                 Spacer()
-                Text(String(format: "Peak Draw: -%.1fW", service.sessionPeakDrawWatts))
+                Text(String(format: "Peak draw  −%.1f W", service.sessionPeakDrawWatts))
             }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.secondary)
+            .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
         }
     }
 }
 
-struct MiniFlowPill: View {
-    let label: String
-    let watts: String
-    let color: Color
-    
+private struct FlowNode: View {
+    let title: String
+    let symbol: String
+    let value: String
+    let active: Bool
     var body: some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(watts)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(color)
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 12)).foregroundStyle(active ? PowerUI.mint : .secondary)
+                Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            Text("\(value) W").font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .background(color.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
-// MARK: - 2. Dual Health & Cell Voltages Tab
+private struct ChartLegend: View {
+    let title: String
+    let color: Color
+    var body: some View {
+        HStack(spacing: 5) {
+            Capsule().fill(color).frame(width: 12, height: 3)
+            Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct PopoverHealthTab: View {
     let s: BatterySnapshot
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("DUAL HEALTH & CAPACITY")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-            
-            CompactRow(
-                label: "macOS Health (Smoothed)",
-                value: s.nominalHealthPercentage > 0 ? String(format: "%.1f%% (%d mAh)", s.nominalHealthPercentage, s.nominalMaxCapacityMAH) : "—"
-            )
-            CompactRow(
-                label: "Raw Chemical Health",
-                value: s.rawHealthPercentage > 0 ? String(format: "%.1f%% (%d mAh)", s.rawHealthPercentage, s.rawMaxCapacityMAH) : "—"
-            )
-            CompactRow(
-                label: "Factory Design Capacity",
-                value: s.designCapacityMAH > 0 ? String(format: "%d mAh (%.1f Wh)", s.designCapacityMAH, s.designEnergyWH) : "—"
-            )
-            CompactRow(
-                label: "Current Stored Capacity",
-                value: String(format: "%d mAh (%.1f Wh)", s.currentCapacityMAH, s.currentEnergyWH)
-            )
-            CompactRow(
-                label: "Cycle Count / Rated",
-                value: "\(s.cycleCount) / \(s.designCycleCount) cycles (\(s.conditionText))"
-            )
-            
-            if !s.cellVoltagesMV.isEmpty {
-                Divider().padding(.vertical, 2)
-                Text("3S LITHIUM-ION CELL VOLTAGES (Δ \(s.cellDeltaMV) mV)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                
+        Surface {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Battery health").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(s.nominalHealthPercentage > 0 ? String(format: "%.1f%%", s.nominalHealthPercentage) : "—")
+                        .font(.system(size: 38, weight: .semibold, design: .rounded)).monospacedDigit()
+                }
+                Spacer()
+                Label(s.conditionText, systemImage: s.conditionText == "Normal" ? "checkmark.shield" : "exclamationmark.shield")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(s.conditionText == "Normal" ? PowerUI.mint : PowerUI.orange)
+                    .padding(8).background(Color.primary.opacity(0.04), in: Capsule())
+            }
+            ProgressView(value: min(100, max(0, s.nominalHealthPercentage)), total: 100).tint(PowerUI.mint)
+            Text("Smoothed capacity compared with factory capacity.").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        HStack(spacing: 8) {
+            MetricTile(title: "Charge cycles", symbol: "arrow.trianglehead.2.clockwise.rotate.90", value: "\(s.cycleCount)", unit: "/ \(s.designCycleCount)")
+            MetricTile(title: "Charge rate", symbol: "bolt", value: s.powerReadingAvailable ? String(format: "%+.1f", s.chargeRatePercentPerHour) : "—", unit: "%/h")
+        }
+        Surface("Capacity") {
+            CompactRow(label: "Stored now", value: String(format: "%.1f Wh · %d mAh", s.currentEnergyWH, s.currentCapacityMAH))
+            CompactRow(label: "Full charge · raw", value: s.rawMaxCapacityMAH > 0 ? String(format: "%.1f Wh · %d mAh", s.maxEnergyWH, s.rawMaxCapacityMAH) : "—")
+            CompactRow(label: "Full charge · smoothed", value: s.nominalMaxCapacityMAH > 0 ? "\(s.nominalMaxCapacityMAH) mAh" : "—")
+            CompactRow(label: "Factory capacity", value: s.designCapacityMAH > 0 ? String(format: "%.1f Wh · %d mAh", s.designEnergyWH, s.designCapacityMAH) : "—")
+            CompactRow(label: "Chemical health · raw", value: s.rawHealthPercentage > 0 ? String(format: "%.1f%%", s.rawHealthPercentage) : "—")
+            CompactRow(label: "Gauge charge level", value: String(format: "%.1f%%", s.rawStateOfCharge))
+        }
+        if !s.cellVoltagesMV.isEmpty {
+            Surface("Cell balance") {
                 HStack(spacing: 8) {
-                    ForEach(Array(s.cellVoltagesMV.enumerated()), id: \.offset) { idx, mv in
-                        VStack(spacing: 2) {
-                            Text("Cell \(idx + 1)")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.secondary)
-                            Text("\(mv) mV")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(5)
-                        .background(Color.primary.opacity(0.05))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    ForEach(Array(s.cellVoltagesMV.enumerated()), id: \.offset) { index, voltage in
+                        VStack(spacing: 5) {
+                            Text("Cell \(index + 1)").font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text("\(voltage) mV").font(.system(size: 12, weight: .semibold)).monospacedDigit()
+                        }.frame(maxWidth: .infinity)
                     }
                 }
+                Text("Difference between cells: \(s.cellDeltaMV) mV").font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
     }
 }
 
-// MARK: - 3. Charger Handshake & BMS Lifetime Tab
 struct PopoverBMSTab: View {
     let s: BatterySnapshot
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("USB-C PD / MAGSAFE HANDSHAKE")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-            
-            CompactRow(
-                label: "Adapter Rating & PDO",
-                value: s.adapterWatts > 0
-                    ? String(format: "%dW (%.1fV @ %.2fA)", s.adapterWatts, s.adapterVoltageV, s.adapterCurrentA)
-                    : "Unplugged"
-            )
-            CompactRow(
-                label: "Wall Input / Conversion Loss",
-                value: String(format: "%.1f W in  •  %.2f W loss", s.wallInputWatts, s.adapterLossWatts)
-            )
-            CompactRow(label: "Charger Identity", value: "\(s.adapterName) (\(s.adapterManufacturer))")
-            
-            Divider().padding(.vertical, 2)
-            
-            Text("BMS BLACK-BOX LIFETIME EXTREMES")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-            
-            CompactRow(
-                label: "Lifetime Min / Max Temp",
-                value: "\(s.lifetimeMinTempC.map { String(format: "%.1f°C", $0) } ?? "—")  /  \(s.lifetimeMaxTempC.map { String(format: "%.1f°C", $0) } ?? "—")"
-            )
-            CompactRow(
-                label: "Peak Charge / Discharge",
-                value: "+\(s.peakChargeCurrentMA ?? 0) mA  /  \(s.peakDischargeCurrentMA ?? 0) mA"
-            )
-            CompactRow(
-                label: "Operating / High-SoC Time",
-                value: "\(s.totalOperatingHours ?? 0) hrs  •  \(s.highSocHours ?? 0) hrs at high SoC"
-            )
-            CompactRow(
-                label: "BMS Controller & Serial",
-                value: "\(s.deviceName) • \(s.serialNumber)"
-            )
+        Surface("Power adapter") {
+            HStack(spacing: 12) {
+                Image(systemName: "powerplug.fill").font(.system(size: 24)).foregroundStyle(PowerUI.blue)
+                    .frame(width: 48, height: 48).background(PowerUI.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(s.adapterName).font(.system(size: 14, weight: .semibold))
+                    Text(s.adapterManufacturer).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            Divider().opacity(0.5)
+            CompactRow(label: "Adapter rating", value: s.adapterWatts > 0 ? "\(s.adapterWatts) W" : "—")
+            CompactRow(label: "Negotiated voltage / current", value: s.adapterVoltageV > 0 ? String(format: "%.1f V / %.2f A", s.adapterVoltageV, s.adapterCurrentA) : "—")
+            CompactRow(label: "Charger input", value: s.inputReadingAvailable ? String(format: "%.1f W", s.wallInputWatts) : "—")
+            CompactRow(label: "Conversion loss · registry", value: String(format: "%.2f W", s.adapterLossWatts))
+            CompactRow(label: "Serial number", value: s.adapterSerial)
+        }
+        Surface("Lifetime records") {
+            CompactRow(label: "Lowest temperature", value: s.lifetimeMinTempC.map { String(format: "%.1f °C", $0) } ?? "—")
+            CompactRow(label: "Highest temperature", value: s.lifetimeMaxTempC.map { String(format: "%.1f °C", $0) } ?? "—")
+            CompactRow(label: "Peak charging current", value: s.peakChargeCurrentMA.map { "\($0) mA" } ?? "—")
+            CompactRow(label: "Peak discharge current", value: s.peakDischargeCurrentMA.map { "\($0) mA" } ?? "—")
+            CompactRow(label: "Operating time", value: s.totalOperatingHours.map { "\($0) h" } ?? "—")
+            CompactRow(label: "Time at high charge", value: s.highSocHours.map { "\($0) h" } ?? "—")
+        }
+        Surface("Battery controller") {
+            CompactRow(label: "Device", value: s.deviceName)
+            CompactRow(label: "Serial number", value: s.serialNumber)
+            CompactRow(label: "Firmware", value: s.firmwareVersion)
+            CompactRow(label: "Voltage / current", value: String(format: "%.2f V / %+.3f A", Double(s.voltageMV) / 1000, Double(s.amperageMA) / 1000))
         }
     }
 }
 
-// MARK: - 4. Alerts, Menu Bar Format & Screen Glow Tab
 struct PopoverAlertsTab: View {
     @ObservedObject var service: BatteryService
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Menu Bar Format")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Picker("", selection: $service.labelStyle) {
-                    ForEach(MenuBarLabelStyle.allCases) { style in
-                        Text(style.rawValue).tag(style)
-                    }
+        Text("Make it yours").font(.system(size: 22, weight: .semibold, design: .rounded)).padding(.bottom, 2)
+        Surface("Menu bar") {
+            Picker("Display", selection: $service.labelStyle) {
+                ForEach(MenuBarLabelStyle.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .font(.system(size: 12))
+            Text("Battery watts show charging (+) or draining (−). Charger input includes your Mac's load.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("Charging stays green at every speed. Charger input is blue.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("Battery drain / Mac load")
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(spacing: 0) {
+                ForEach(Array([("<10 W", PowerUI.mint), ("10–20", Color(red: 0.72, green: 0.52, blue: 0.10)), ("20–40", PowerUI.orange), ("40+ W", Color.red)].enumerated()), id: \.offset) { _, item in
+                    VStack(spacing: 5) {
+                        Capsule().fill(item.1).frame(height: 3)
+                        Text(item.0).font(.system(size: 10)).foregroundStyle(.secondary)
+                    }.padding(.horizontal, 3)
                 }
-                .labelsHidden()
-                .frame(width: 210)
             }
-            
-            Divider()
-            
-            Toggle("Enable Custom Battery Threshold Alerts", isOn: $service.alertsEnabled)
-                .font(.caption.weight(.semibold))
-            
-            Toggle("Juicy-Style Full-Screen Neon Border Glow", isOn: $service.screenGlowEnabled)
-                .font(.caption)
-                .disabled(!service.alertsEnabled)
-            
-            HStack {
-                Text("Low Alert: \(Int(service.lowBatteryThreshold))%")
-                    .font(.caption2.monospaced())
-                    .frame(width: 95, alignment: .leading)
-                Slider(value: $service.lowBatteryThreshold, in: 5...45, step: 5)
-            }
-            
-            HStack {
-                Text("High Limit: \(Int(service.highChargeLimitThreshold))%")
-                    .font(.caption2.monospaced())
-                    .frame(width: 95, alignment: .leading)
-                Slider(value: $service.highChargeLimitThreshold, in: 60...95, step: 5)
-            }
-            
+            Text("Warm colors indicate higher drain or load, not battery damage.").font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+        Surface("Battery alerts") {
+            Toggle("Threshold notifications", isOn: $service.alertsEnabled).font(.system(size: 12, weight: .medium))
+                .toggleStyle(.switch).controlSize(.small)
+            Text("A heads-up when your battery crosses either threshold.").font(.system(size: 11)).foregroundStyle(.secondary)
+            Divider().opacity(0.5)
+            ThresholdSlider(title: "Low battery", value: $service.lowBatteryThreshold, range: 5...45)
+            ThresholdSlider(title: "Charge target", value: $service.highChargeLimitThreshold, range: 60...95)
+        }
+        Surface("Screen glow") {
+            Toggle("Highlight the screen edge", isOn: $service.screenGlowEnabled).font(.system(size: 12, weight: .medium))
+                .toggleStyle(.switch).controlSize(.small).disabled(!service.alertsEnabled)
+            Text("A brief glow accompanies threshold notifications.").font(.system(size: 11)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                Button("Test Green Glow") {
-                    service.triggerScreenEdgeGlow(color: .systemGreen)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .controlSize(.small)
-                
-                Button("Test Orange Glow") {
-                    service.triggerScreenEdgeGlow(color: .systemOrange)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .controlSize(.small)
-            }
-            .padding(.top, 2)
+                Button("Preview charge glow") { service.triggerScreenEdgeGlow(color: .systemGreen) }
+                Button("Preview low glow") { service.triggerScreenEdgeGlow(color: .systemOrange) }
+            }.buttonStyle(.bordered).controlSize(.small)
         }
     }
 }
 
-// MARK: - 5. Searchable Raw IORegistry Tab
+private struct ThresholdSlider: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(title).font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(value))%").font(.system(size: 12, weight: .semibold)).monospacedDigit()
+            }
+            Slider(value: $value, in: range, step: 5).tint(PowerUI.mint).accessibilityLabel(title)
+        }
+    }
+}
+
 struct PopoverRawTab: View {
     let pairs: [(key: String, value: String)]
     @Binding var search: String
-    
-    var filtered: [(key: String, value: String)] {
+    private var filtered: [(key: String, value: String)] {
         guard !search.isEmpty else { return pairs }
-        return pairs.filter {
-            $0.key.localizedCaseInsensitiveContains(search) ||
-            $0.value.localizedCaseInsensitiveContains(search)
-        }
+        return pairs.filter { $0.key.localizedCaseInsensitiveContains(search) || $0.value.localizedCaseInsensitiveContains(search) }
     }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Search IORegistry keys (e.g. Capacity, Temp, Cell)...", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-            
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(filtered, id: \.key) { item in
-                        HStack(alignment: .top) {
-                            Text(item.key)
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .frame(width: 210, alignment: .leading)
-                            Spacer()
-                            Text(item.value)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .textSelection(.enabled)
-                        }
-                        Divider()
+        HStack {
+            Text("Data inspector").font(.system(size: 22, weight: .semibold, design: .rounded))
+            Spacer()
+            Text("\(filtered.count) keys").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        TextField("Search keys or values", text: $search).textFieldStyle(.roundedBorder).accessibilityLabel("Search raw battery data")
+        if filtered.isEmpty {
+            ContentUnavailableView.search(text: search)
+        } else {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(filtered, id: \.key) { item in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.key).font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(item.value).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding(12).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
                 }
             }
-            .frame(height: 155)
         }
     }
 }
@@ -496,15 +558,14 @@ struct PopoverRawTab: View {
 struct CompactRow: View {
     let label: String
     let value: String
-    
     var body: some View {
-        HStack {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(.caption, design: .monospaced, weight: .medium))
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(value).font(.system(size: 11, weight: .medium)).monospacedDigit()
+                .multilineTextAlignment(.trailing).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

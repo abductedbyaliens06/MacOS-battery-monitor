@@ -15,8 +15,10 @@ enum PowerState: String {
 }
 
 enum MenuBarLabelStyle: String, CaseIterable, Identifiable {
-    case percentAndWatts = "91% +11.7W (Default)"
-    case wattsOnly = "+11.7W (Watts Only)"
+    case percentAndWatts = "Percentage + Battery Watts"
+    case wattsOnly = "Battery Watts (Default)"
+    case inputWatts = "Charger Input Watts"
+    case systemWatts = "System Load Watts"
     case percentAndSysLoad = "91% • Sys 8.3W"
     case percentAndTemp = "91% • 31.2°C"
     case percentOnly = "91% (Compact)"
@@ -94,6 +96,10 @@ struct BatterySnapshot {
     // State & Time
     var powerState: PowerState = .unknown
     var timeRemainingMinutes: Int? = nil
+    var powerReadingAvailable: Bool = false
+    var inputReadingAvailable: Bool = false
+    var powerReadingSource: String = "Unavailable"
+    var usesLiveSensors: Bool = false
 }
 
 @MainActor
@@ -103,7 +109,7 @@ final class BatteryService: ObservableObject {
     @Published var rawRegistryPairs: [(key: String, value: String)] = []
     
     // Menu Bar Appearance
-    @Published var labelStyle: MenuBarLabelStyle = .percentAndWatts
+    @Published var labelStyle: MenuBarLabelStyle = .wattsOnly
     
     // Session Statistics
     @Published var sessionPeakDrawWatts: Double = 0.0
@@ -115,6 +121,10 @@ final class BatteryService: ObservableObject {
     @Published var lowBatteryThreshold: Double = 20.0
     @Published var highChargeLimitThreshold: Double = 80.0
     
+    private let smc = SMCPowerReader()
+    private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var lastRegistryToken: String?
+    private var lastRegistryChange = Date()
     private var monitoringTask: Task<Void, Never>?
     private var lastAlertKey: String = ""
     private var glowWindow: NSWindow?
@@ -122,9 +132,54 @@ final class BatteryService: ObservableObject {
     init() {
         requestNotificationPermissions()
         refresh()
-        startMonitoring(interval: 2.0)
+        startMonitoring(interval: 1.0)
+        installPowerNotifications()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil
+        )
     }
     
+    deinit {
+        monitoringTask?.cancel()
+        if let source = powerSourceRunLoopSource {
+            CFRunLoopSourceInvalidate(source)
+        }
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    private func installPowerNotifications() {
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        powerSourceRunLoopSource = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            // This source is scheduled exclusively on the main run loop.
+            MainActor.assumeIsolated {
+                Unmanaged<BatteryService>.fromOpaque(context).takeUnretainedValue().refresh()
+            }
+        }, context)?.takeRetainedValue()
+        if let source = powerSourceRunLoopSource {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+    }
+
+    @objc private func didWake(_ notification: Notification) {
+        smc.reconnect()
+        lastRegistryToken = nil
+        history.removeAll()
+        refresh()
+    }
+
+    private func systemPowerSource() -> [String: Any] {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return [:] }
+        for source in list {
+            if let description = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+               description[kIOPSTypeKey] as? String == kIOPSInternalBatteryType {
+                return description
+            }
+        }
+        return [:]
+    }
+
     func startMonitoring(interval: TimeInterval) {
         monitoringTask?.cancel()
         monitoringTask = Task { [weak self] in
@@ -140,6 +195,8 @@ final class BatteryService: ObservableObject {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else {
             snapshot = BatterySnapshot(hasBattery: false, powerState: .desktopAC)
+            history.removeAll()
+            rawRegistryPairs.removeAll()
             return
         }
         defer { IOObjectRelease(service) }
@@ -175,7 +232,7 @@ final class BatteryService: ObservableObject {
             ?? mergedProps["LifetimeData"] as? [String: Any] ?? [:]
         let powerTelemetry = mergedProps["PowerTelemetryData"] as? [String: Any]
             ?? batteryData["PowerTelemetryData"] as? [String: Any] ?? [:]
-        let adapterDetails = mergedProps["AdapterDetails"] as? [String: Any] ?? [:]
+        let rawAdapterDetails = mergedProps["AdapterDetails"] as? [String: Any] ?? [:]
         
         func readInt(_ keys: [String], minValid: Int? = nil) -> Int? {
             for key in keys {
@@ -191,6 +248,7 @@ final class BatteryService: ObservableObject {
             return nil
         }
         
+        let source = systemPowerSource()
         var next = BatterySnapshot(hasBattery: true)
         
         // 2. Capacities (mAh) — Ignore MaxCapacity=100 percentage flag
@@ -239,51 +297,80 @@ final class BatteryService: ObservableObject {
             }
         }
         
-        // 5. Voltage, Signed Amperage & 3-Way Power Routing
-        let voltage = readInt(["AppleRawBatteryVoltage", "Voltage"], minValid: 1000) ?? 11400
-        let amperage = Int((mergedProps["InstantAmperage"] as? NSNumber)?.int64Value
-            ?? (mergedProps["Amperage"] as? NSNumber)?.int64Value
-            ?? (batteryData["InstantAmperage"] as? NSNumber)?.int64Value ?? 0)
-        
+        // 5. Live sensors first; registry figures are a slower hardware fallback.
+        let externalConnected = (source[kIOPSPowerSourceStateKey] as? String).map { $0 == kIOPSACPowerValue }
+            ?? (mergedProps["ExternalConnected"] as? Bool) ?? false
+        let isCharging = (source[kIOPSIsChargingKey] as? Bool)
+            ?? (mergedProps["IsCharging"] as? Bool) ?? false
+        let fullyCharged = (source[kIOPSIsChargedKey] as? Bool)
+            ?? (mergedProps["FullyCharged"] as? Bool) ?? false
+        if let current = source[kIOPSCurrentCapacityKey] as? NSNumber,
+           let maximum = source[kIOPSMaxCapacityKey] as? NSNumber, maximum.doubleValue > 0 {
+            next.percentage = min(100, max(0, Int((current.doubleValue / maximum.doubleValue * 100).rounded())))
+        }
+
+        let voltage = readInt(["AppleRawBatteryVoltage", "Voltage"], minValid: 1000) ?? 0
+        let currentNumber = (mergedProps["InstantAmperage"] as? NSNumber)
+            ?? (batteryData["InstantAmperage"] as? NSNumber)
+            ?? (mergedProps["Amperage"] as? NSNumber)
+            ?? (batteryData["Amperage"] as? NSNumber)
+        // Some drivers expose negative current as an unsigned 32- or 64-bit integer.
+        let amperage = currentNumber.map { PowerTelemetry.signedValue($0) } ?? 0
         next.voltageMV = voltage
         next.amperageMA = amperage
-        next.liveWatts = (Double(voltage) * Double(amperage)) / 1_000_000.0
-        
-        let nominalVolts = voltage > 5000 ? (Double(voltage) / 1000.0) : 11.4
-        next.currentEnergyWH = (Double(rawCurrMAH) * nominalVolts) / 1000.0
-        next.maxEnergyWH = (Double(effectiveMaxMAH) * nominalVolts) / 1000.0
-        next.designEnergyWH = (Double(designMAH) * 11.4) / 1000.0
-        
-        if effectiveMaxMAH > 0 {
-            next.chargeRatePercentPerHour = (Double(amperage) / Double(effectiveMaxMAH)) * 100.0
+        let gaugeWatts: Double? = currentNumber != nil && voltage > 0
+            ? Double(voltage) * Double(amperage) / 1_000_000 : nil
+        let telemetryWatts = (powerTelemetry["BatteryPower"] as? NSNumber).map {
+            Double(PowerTelemetry.signedValue($0)) / 1000
         }
-        
-        let sysPowerInMW = (powerTelemetry["SystemPowerIn"] as? NSNumber)?.int64Value ?? 0
-        let sysLoadMW = (powerTelemetry["SystemLoad"] as? NSNumber)?.int64Value ?? 0
-        let adapterLossMW = (powerTelemetry["AdapterEfficiencyLoss"] as? NSNumber)?.int64Value ?? 0
-        
-        let externalConnected = (mergedProps["ExternalConnected"] as? Bool) ?? false
-        let isCharging = (mergedProps["IsCharging"] as? Bool) ?? false
-        let fullyCharged = (mergedProps["FullyCharged"] as? Bool) ?? false
-        
-        if sysPowerInMW > 0 {
-            next.wallInputWatts = Double(sysPowerInMW) / 1000.0
-        } else if externalConnected {
-            next.wallInputWatts = max(0.0, next.liveWatts)
+        let registryWatts = telemetryWatts.flatMap { abs($0) <= 300 ? $0 : nil } ?? gaugeWatts
+        let tokenKeys = ["BatteryPowerAccumulatorCount", "SystemLoadAccumulatorCount", "SystemPowerInAccumulatorCount"]
+        let counters = tokenKeys.compactMap { powerTelemetry[$0].map { String(describing: $0) } }
+        let token = counters.isEmpty ? String(describing: mergedProps["UpdateTime"] ?? "") : counters.joined(separator: ":")
+        if lastRegistryToken != token {
+            lastRegistryToken = token
+            lastRegistryChange = Date()
         }
-        
-        if adapterLossMW > 0 {
-            next.adapterLossWatts = Double(adapterLossMW) / 1000.0
+        let registryFresh = Date().timeIntervalSince(lastRegistryChange) < 90
+        let live = smc.read()
+        let watts = live?.batteryWatts ?? (registryFresh ? registryWatts : nil)
+        // Suppress a positive reading left behind by the gauge after unplugging.
+        let validWatts = PowerTelemetry.validBatteryWatts(watts, externalConnected: externalConnected)
+        next.powerReadingAvailable = validWatts != nil
+        next.liveWatts = validWatts ?? 0
+        next.usesLiveSensors = live != nil
+        next.powerReadingSource = live != nil ? "Live SMC · 1 s" : (next.powerReadingAvailable ? "Registry · slower updates" : "Waiting for power telemetry")
+        if let live {
+            next.voltageMV = Int((live.voltageV * 1000).rounded())
+            next.amperageMA = Int((live.currentA * 1000).rounded())
         }
-        
+
+        let nominalVolts = next.voltageMV > 5000 ? Double(next.voltageMV) / 1000 : 11.4
+        next.currentEnergyWH = Double(rawCurrMAH) * nominalVolts / 1000
+        next.maxEnergyWH = Double(effectiveMaxMAH) * nominalVolts / 1000
+        next.designEnergyWH = Double(designMAH) * 11.4 / 1000
+        if effectiveMaxMAH > 0 && next.powerReadingAvailable {
+            next.chargeRatePercentPerHour = Double(next.amperageMA) / Double(effectiveMaxMAH) * 100
+        }
+
+        let registryInput = (powerTelemetry["SystemPowerIn"] as? NSNumber)?.doubleValue
+        let input = live?.adapterWatts ?? (registryFresh ? registryInput.map { $0 / 1000 } : nil)
+        next.inputReadingAvailable = !externalConnected || input.map { (0...300).contains($0) } == true
+        next.wallInputWatts = externalConnected && next.inputReadingAvailable ? (input ?? 0) : 0
+        let sysLoadMW = (powerTelemetry["SystemLoad"] as? NSNumber)?.doubleValue ?? 0
         if !externalConnected {
-            next.systemLoadWatts = abs(min(0.0, next.liveWatts))
-        } else if sysLoadMW > 0 && Double(sysLoadMW) / 1000.0 < 180.0 {
-            next.systemLoadWatts = Double(sysLoadMW) / 1000.0
-        } else if next.wallInputWatts > 0 {
-            next.systemLoadWatts = max(0.0, next.wallInputWatts - max(0.0, next.liveWatts))
+            next.systemLoadWatts = abs(min(0, next.liveWatts))
+        } else if live?.adapterWatts != nil && next.powerReadingAvailable {
+            next.systemLoadWatts = max(0, next.wallInputWatts - next.liveWatts)
+        } else if registryFresh && sysLoadMW > 0 && sysLoadMW < 300_000 {
+            next.systemLoadWatts = sysLoadMW / 1000
+        } else if next.inputReadingAvailable && next.powerReadingAvailable {
+            next.systemLoadWatts = max(0, next.wallInputWatts - next.liveWatts)
         }
-        
+        if externalConnected && registryFresh {
+            next.adapterLossWatts = max(0, (powerTelemetry["AdapterEfficiencyLoss"] as? NSNumber)?.doubleValue ?? 0) / 1000
+        }
+
         // 6. Temperature (VirtualTemperature in 0.01°C vs Temperature in 0.1K)
         if let virtualTemp = (mergedProps["VirtualTemperature"] as? NSNumber)?.doubleValue
             ?? (batteryData["VirtualTemperature"] as? NSNumber)?.doubleValue,
@@ -322,6 +409,7 @@ final class BatteryService: ObservableObject {
         }
         
         // 9. Adapter / USB-C PD Handshake
+        let adapterDetails = externalConnected ? rawAdapterDetails : [:]
         next.adapterWatts = (adapterDetails["Watts"] as? NSNumber)?.intValue ?? 0
         if let v = (adapterDetails["AdapterVoltage"] as? NSNumber)?.doubleValue
             ?? (adapterDetails["Voltage"] as? NSNumber)?.doubleValue {
@@ -334,7 +422,7 @@ final class BatteryService: ObservableObject {
         next.adapterName = (adapterDetails["Description"] as? String)
             ?? (adapterDetails["Name"] as? String)
             ?? (externalConnected ? "AC Power Adapter" : "Disconnected")
-        next.adapterManufacturer = (adapterDetails["Manufacturer"] as? String) ?? "Apple / USB-PD"
+        next.adapterManufacturer = (adapterDetails["Manufacturer"] as? String) ?? (externalConnected ? "Apple / USB-PD" : "—")
         next.adapterSerial = (adapterDetails["SerialString"] as? String) ?? "—"
         
         // 10. BMS Lifetime Black-Box Data
@@ -379,7 +467,14 @@ final class BatteryService: ObservableObject {
             next.powerState = .discharging
         }
         
-        let timeRem = readInt(["TimeRemaining", "AvgTimeToFull", "AvgTimeToEmpty"])
+        let timeRem: Int?
+        if next.powerState == .charging {
+            timeRem = (source[kIOPSTimeToFullChargeKey] as? NSNumber)?.intValue ?? readInt(["AvgTimeToFull", "TimeRemaining"])
+        } else if next.powerState == .discharging {
+            timeRem = (source[kIOPSTimeToEmptyKey] as? NSNumber)?.intValue ?? readInt(["AvgTimeToEmpty", "TimeRemaining"])
+        } else {
+            timeRem = nil
+        }
         if let t = timeRem, t > 0 && t < 6000 {
             next.timeRemainingMinutes = t
         }
@@ -398,10 +493,11 @@ final class BatteryService: ObservableObject {
             temperatureC: next.temperatureCelsius,
             percentage: next.percentage
         )
-        history.append(sample)
-        if history.count > 60 {
-            history.removeFirst(history.count - 60)
+        if next.powerReadingAvailable,
+           history.last.map({ sample.timestamp.timeIntervalSince($0.timestamp) >= 0.8 }) ?? true {
+            history.append(sample)
         }
+        history.removeAll { Date().timeIntervalSince($0.timestamp) > 120 }
         
         buildRawInspectorList(top: mergedProps, batteryData: batteryData, power: powerTelemetry, lifetime: lifetimeData)
         
