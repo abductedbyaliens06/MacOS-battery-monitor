@@ -18,7 +18,7 @@ struct PowerSample: Identifiable {
     let id = UUID()
     let timestamp: Date
     let batteryWatts: Double
-    let systemLoadWatts: Double
+    let systemLoadWatts: Double?
     let wallWatts: Double
     let temperatureC: Double?
     let percentage: Int
@@ -33,6 +33,7 @@ struct BatterySnapshot {
     var voltageMV: Int = 0
     var amperageMA: Int = 0
     var liveWatts: Double = 0.0              // + charging, - discharging
+    var systemLoadReadingAvailable = false
     var systemLoadWatts: Double = 0.0        // CPU/GPU/Display consumption
     var wallInputWatts: Double = 0.0         // Power pulled from charger
     var adapterLossWatts: Double = 0.0       // Adapter heat loss
@@ -95,6 +96,9 @@ struct BatterySnapshot {
 final class BatteryService: ObservableObject {
     @Published var snapshot = BatterySnapshot()
     @Published var history: [PowerSample] = []
+    @Published private(set) var storageMessage: String?
+    @Published private(set) var historyRevision = 0
+    private var archiveHistory = BatteryHistory()
     @Published private(set) var sessions = BatterySessionTracker()
     @Published var rawRegistryPairs: [(key: String, value: String)] = []
     
@@ -111,6 +115,13 @@ final class BatteryService: ObservableObject {
     @Published var lowBatteryThreshold: Double = 20.0 { didSet { savePreferences() } }
     @Published var highChargeLimitThreshold: Double = 80.0 { didSet { savePreferences() } }
     
+    private let archiveStore = BatteryArchiveStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("BatteryMonitor/history-v1.json"))
+    private var archiveReady = true
+    private var archiveGeneration = UUID()
+    private var lastArchiveSave = Date.distantPast
+    private var lastHistoryPublish = Date.distantPast
+    private var isSleeping = false
     private let preferencesStore = BatteryPreferencesStore()
     private let smc = SMCPowerReader()
     private var powerSourceRunLoopSource: CFRunLoopSource?
@@ -121,6 +132,16 @@ final class BatteryService: ObservableObject {
     private var glowWindow: NSWindow?
     
     init() {
+        do {
+            if let archive = try archiveStore.load() {
+                archiveHistory = BatteryHistory(buckets: archive.buckets)
+                sessions.restore(archive.sessions.filter { $0.lastObservedAt >= Date().addingTimeInterval(-BatteryHistory.retention) })
+            }
+        } catch {
+            archiveReady = false
+            storageMessage = "Saved history could not be read. The existing file is preserved; clear local history in Settings to start again."
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(willTerminate), name: NSApplication.willTerminateNotification, object: nil)
         let preferences = preferencesStore.load()
         labelStyle = preferences.labelStyle
         alertsEnabled = preferences.alertsEnabled
@@ -145,6 +166,7 @@ final class BatteryService: ObservableObject {
             CFRunLoopSourceInvalidate(source)
         }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func savePreferences() {
@@ -167,10 +189,56 @@ final class BatteryService: ObservableObject {
         }
     }
 
-    @objc private func willSleep(_ notification: Notification) { sessions.breakContinuity() }
+    @objc private func willSleep(_ notification: Notification) {
+        isSleeping = true
+        sessions.breakContinuity(); archiveHistory.breakContinuity()
+        flushArchive()
+    }
+
+    @objc private func willTerminate(_ notification: Notification) { flushArchive() }
+
+    private var archive: BatteryArchive {
+        BatteryArchive(buckets: archiveHistory.buckets,
+                       sessions: sessions.allSessions.filter { $0.lastObservedAt >= Date().addingTimeInterval(-BatteryHistory.retention) })
+    }
+
+    private func persistArchive(force: Bool = false) {
+        guard archiveReady, force || Date().timeIntervalSince(lastArchiveSave) >= 60 else { return }
+        lastArchiveSave = Date()
+        let generation = archiveGeneration
+        archiveStore.save(archive) { [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, self.archiveGeneration == generation else { return }
+                self.storageMessage = message
+            }
+        }
+    }
+
+    private func flushArchive() {
+        guard archiveReady else { return }
+        do { try archiveStore.flush(archive); storageMessage = nil }
+        catch { storageMessage = "Could not save local battery history. Recent readings may not survive a restart." }
+    }
+
+    func historyBuckets(since date: Date, until end: Date = Date()) -> [BatteryHistoryBucket] {
+        archiveHistory.chartBuckets(since: date, until: end)
+    }
+
+    func clearLocalHistory() {
+        // Joining the writer also ensures earlier snapshots cannot restore deleted history.
+        do {
+            try archiveStore.flush(BatteryArchive(buckets: [], sessions: []))
+            archiveGeneration = UUID()
+            archiveHistory = BatteryHistory(); sessions = BatterySessionTracker()
+            archiveReady = true; storageMessage = nil; historyRevision += 1
+            history.removeAll(); sessionPeakDrawWatts = 0; sessionPeakChargeWatts = 0
+            lastArchiveSave = Date(); refresh()
+        } catch { storageMessage = "Could not clear local history. Your existing history has been retained." }
+    }
 
     @objc private func didWake(_ notification: Notification) {
-        sessions.breakContinuity()
+        isSleeping = false
+        sessions.breakContinuity(); archiveHistory.breakContinuity()
         smc.reconnect()
         lastRegistryToken = nil
         history.removeAll()
@@ -201,9 +269,11 @@ final class BatteryService: ObservableObject {
     }
     
     func refresh() {
+        guard !isSleeping else { return }
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else {
-            sessions.breakContinuity()
+            sessions.breakContinuity(); archiveHistory.breakContinuity()
+            persistArchive()
             snapshot = BatterySnapshot(hasBattery: false, powerState: .desktopAC)
             history.removeAll()
             rawRegistryPairs.removeAll()
@@ -369,12 +439,16 @@ final class BatteryService: ObservableObject {
         next.wallInputWatts = externalConnected && next.inputReadingAvailable ? (input ?? 0) : 0
         let sysLoadMW = (powerTelemetry["SystemLoad"] as? NSNumber)?.doubleValue ?? 0
         if !externalConnected {
+            next.systemLoadReadingAvailable = next.powerReadingAvailable
             next.systemLoadWatts = abs(min(0, next.liveWatts))
         } else if live?.adapterWatts != nil && next.powerReadingAvailable {
+            next.systemLoadReadingAvailable = true
             next.systemLoadWatts = max(0, next.wallInputWatts - next.liveWatts)
         } else if registryFresh && sysLoadMW > 0 && sysLoadMW < 300_000 {
+            next.systemLoadReadingAvailable = true
             next.systemLoadWatts = sysLoadMW / 1000
         } else if next.inputReadingAvailable && next.powerReadingAvailable {
+            next.systemLoadReadingAvailable = true
             next.systemLoadWatts = max(0, next.wallInputWatts - next.liveWatts)
         }
         if externalConnected && registryFresh {
@@ -488,13 +562,24 @@ final class BatteryService: ObservableObject {
             sessionPeakChargeWatts = max(sessionPeakChargeWatts, next.liveWatts)
         }
         
-        sessions.observe(at: Date(), onBattery: !externalConnected, percentage: next.percentage,
+        let now = Date()
+        let previousSessionID = sessions.current?.id
+        sessions.observe(at: now, onBattery: !externalConnected, percentage: next.percentage,
                          watts: next.powerReadingAvailable ? next.liveWatts : nil)
+        archiveHistory.record(at: now, onBattery: !externalConnected, percentage: next.percentage,
+                              battery: next.powerReadingAvailable ? next.liveWatts : nil,
+                              load: next.systemLoadReadingAvailable ? next.systemLoadWatts : nil,
+                              input: next.inputReadingAvailable ? next.wallInputWatts : nil,
+                              temperature: next.temperatureCelsius)
+        persistArchive(force: previousSessionID != sessions.current?.id)
+        if now.timeIntervalSince(lastHistoryPublish) >= 15 {
+            lastHistoryPublish = now; historyRevision += 1
+        }
 
         let sample = PowerSample(
             timestamp: Date(),
             batteryWatts: next.liveWatts,
-            systemLoadWatts: next.systemLoadWatts,
+            systemLoadWatts: next.systemLoadReadingAvailable ? next.systemLoadWatts : nil,
             wallWatts: next.wallInputWatts,
             temperatureC: next.temperatureCelsius,
             percentage: next.percentage
