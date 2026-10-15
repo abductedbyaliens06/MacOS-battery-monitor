@@ -22,6 +22,7 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.
 - **Power dashboard:** charging status, battery level, temperature, stored energy, power flow, and a rolling two-minute chart.
 - **Battery temperature:** read-only SMC battery sensor with registry fallback; unavailable readings remain clearly marked.
+- **Battery session summaries:** observed time, percentage-point drop, time-weighted average draw, energy used, and measurement coverage. Sleep and monitoring gaps start a fresh observed session.
 - **Battery health:** raw and smoothed capacity, charge cycles, charge-rate estimates, and cell voltages when exposed by the hardware.
 - **Hardware details:** adapter rating, voltage/current, battery controller information, and available lifetime records.
 - **Custom alerts:** low-battery and charge-target notifications, with an optional screen-edge glow.

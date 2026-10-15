@@ -95,6 +95,7 @@ struct BatterySnapshot {
 final class BatteryService: ObservableObject {
     @Published var snapshot = BatterySnapshot()
     @Published var history: [PowerSample] = []
+    @Published private(set) var sessions = BatterySessionTracker()
     @Published var rawRegistryPairs: [(key: String, value: String)] = []
     
     // Menu Bar Appearance
@@ -131,6 +132,9 @@ final class BatteryService: ObservableObject {
         startMonitoring(interval: 1.0)
         installPowerNotifications()
         NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil
         )
     }
@@ -163,7 +167,10 @@ final class BatteryService: ObservableObject {
         }
     }
 
+    @objc private func willSleep(_ notification: Notification) { sessions.breakContinuity() }
+
     @objc private func didWake(_ notification: Notification) {
+        sessions.breakContinuity()
         smc.reconnect()
         lastRegistryToken = nil
         history.removeAll()
@@ -196,6 +203,7 @@ final class BatteryService: ObservableObject {
     func refresh() {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != 0 else {
+            sessions.breakContinuity()
             snapshot = BatterySnapshot(hasBattery: false, powerState: .desktopAC)
             history.removeAll()
             rawRegistryPairs.removeAll()
@@ -480,6 +488,9 @@ final class BatteryService: ObservableObject {
             sessionPeakChargeWatts = max(sessionPeakChargeWatts, next.liveWatts)
         }
         
+        sessions.observe(at: Date(), onBattery: !externalConnected, percentage: next.percentage,
+                         watts: next.powerReadingAvailable ? next.liveWatts : nil)
+
         let sample = PowerSample(
             timestamp: Date(),
             batteryWatts: next.liveWatts,

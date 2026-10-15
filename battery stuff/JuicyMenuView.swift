@@ -290,6 +290,9 @@ struct PopoverFlowTab: View {
     var body: some View {
         let s = service.snapshot
         BatteryHero(s: s)
+        if let session = service.sessions.current ?? service.sessions.completed.first {
+            BatterySessionCard(session: session, active: service.sessions.current != nil)
+        }
         HStack(spacing: 8) {
             MetricTile(title: "Mac load", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), unit: "W")
             MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius.map { String(format: "%.1f", $0) } ?? "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
@@ -570,5 +573,43 @@ struct CompactRow: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct BatterySessionCard: View {
+    let session: BatterySession
+    let active: Bool
+    private var duration: String {
+        let minutes = Int(session.observedSeconds / 60)
+        return minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+    var body: some View {
+        Surface {
+            HStack {
+                Label(active ? (session.startedAtUnplug ? "Since unplugging" : "Monitoring on battery") : "Last battery session", systemImage: "battery.75")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(session.startedAt, style: .time).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .firstTextBaseline) {
+                statistic(duration, label: "observed")
+                Spacer()
+                statistic("\(session.percentagePointsUsed)%", label: "battery used")
+                Spacer()
+                statistic(session.averageDrawWatts.map { String(format: "%.1f W", $0) } ?? "—", label: "average draw")
+            }
+            Text(session.measuredSeconds >= 1
+                 ? String(format: "%.2f Wh measured · %.0f%% power coverage", session.energyUsedWh, session.coverage * 100)
+                 : "Collecting power samples…")
+                .font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+            Text("Observed time excludes sleep and gaps. Sessions start fresh when monitoring resumes.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+    private func statistic(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
     }
 }
