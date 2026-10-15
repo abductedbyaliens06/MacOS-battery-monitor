@@ -18,8 +18,12 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 ## Features
 
 - **Live battery power:** signed wattage, sampled approximately once per second when supported SMC sensors are available.
+- **Saved preferences:** menu bar appearance, alerts, glow, and thresholds survive app restarts.
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.
+- **Local history:** seven days of minute averages for power, charge level, and battery temperature, with 1-hour, 24-hour, and 7-day views. Recent session summaries survive restarts.
 - **Power dashboard:** charging status, battery level, temperature, stored energy, power flow, and a rolling two-minute chart.
+- **Battery temperature:** read-only SMC battery hotspot sensor (`TB0T`, or the highest available `TB1T`/`TB2T` reading) with registry fallback; unavailable readings remain clearly marked.
+- **Battery session summaries:** observed time, percentage-point drop, time-weighted average draw, energy used, and measurement coverage. Sleep and monitoring gaps start a fresh observed session.
 - **Battery health:** raw and smoothed capacity, charge cycles, charge-rate estimates, and cell voltages when exposed by the hardware.
 - **Hardware details:** adapter rating, voltage/current, battery controller information, and available lifetime records.
 - **Custom alerts:** low-battery and charge-target notifications, with an optional screen-edge glow.
@@ -90,19 +94,13 @@ The app remains sandboxed and includes an IOKit user-client exception for SMC ac
 
 ## Regression checks
 
-Run from the repository directory:
+Run all local regression checks from the repository directory:
 
 ```sh
-swiftc -module-cache-path /tmp/battery-swift-cache \
-  "battery stuff/PowerTelemetry.swift" \
-  "battery stuff/SMCPowerReader.swift" \
-  Tests/PowerTelemetryTests.swift \
-  -o /tmp/battery-telemetry-tests
-
-/tmp/battery-telemetry-tests
+./scripts/check.sh
 ```
 
-These checks cover signed-current decoding, delayed positive charge readings after unplugging, invalid or missing battery power values, and SMC payload decoding. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
+These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, and write ordering. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
 
 ## Project structure
 
@@ -110,6 +108,10 @@ These checks cover signed-current decoding, delayed positive charge readings aft
 battery stuff/
 ├── BatteryMonitorApp.swift       # App entry point and colored menu bar label
 ├── BatteryService.swift          # Monitoring, telemetry, history, and alerts
+├── BatteryPreferences.swift     # Saved menu bar and alert preferences
+├── BatterySessions.swift        # Observed sessions and measured energy
+├── BatteryHistory.swift         # Minute aggregation and local archive
+├── BatteryHistoryView.swift     # Power, charge, and temperature timelines
 ├── SMCPowerReader.swift          # Read-only live sensor access
 ├── PowerTelemetry.swift          # Signed-value decoding and validation
 ├── JuicyMenuView.swift           # Dashboard, settings, and inspector
@@ -123,4 +125,14 @@ battery stuff.xcodeproj/          # Xcode project
 
 This version is a monitoring tool. It does not automatically optimize other apps, limit charging, change CPU/GPU power settings, or guarantee longer battery life. Charge targets trigger alerts; they do not stop charging.
 
-Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences, alert settings, and session history currently reset when the app restarts. Battery readings stay local; the app contains no network requests or analytics.
+Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. History and up to 50 recent battery session summaries are stored for seven days in the app’s Application Support directory. Battery readings stay local; the app contains no network requests or analytics.
+
+## Sessions and local history
+
+The Power tab shows the current battery session, or the last completed session when connected to power. A session begins when an unplug event is observed, or when the app starts monitoring an already unplugged Mac. It reports observed time, percentage points used, time-weighted average draw, and measured watt-hours. Average draw uses valid consecutive samples; measurement coverage shows how much observed time those samples cover.
+
+The History tab stores minute averages and offers 1-hour, 24-hour, and 7-day timelines. Longer ranges combine averages using sample counts. Power-source changes, missing sensors, sleep, and app restarts create separate chart segments. Sleep, app downtime, and sampling gaps longer than 15 seconds are not included in energy totals. New sessions start after these interruptions because the app cannot know whether the charger changed while monitoring was paused.
+
+History is local JSON under the sandboxed app's `Application Support/BatteryMonitor/history-v1.json`. It contains numeric readings, timestamps, random chart/session IDs, and battery session summaries; it does not store serial numbers or raw registry data. Writes run on a background queue about once a minute and on session changes. Normal quit and sleep flush pending data; a force quit or crash can lose the last minute. Corrupt or unsupported history is reported and preserved until you choose **Settings → Clear local history**. Clearing history keeps appearance and alert preferences.
+
+The live two-minute chart and its peak values cover the current app run; persisted charts show averages rather than individual one-second peaks. No readings are reconstructed while the app is closed.

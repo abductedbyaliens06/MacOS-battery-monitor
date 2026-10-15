@@ -33,6 +33,15 @@ struct PowerTelemetryTests {
         assert(SMCPowerReader.decode(bytes: [0, 0], type: fourCC("????")) == nil)
         let nanBytes = withUnsafeBytes(of: Float.nan) { Array($0) }
         assert(SMCPowerReader.decode(bytes: nanBytes, type: fourCC("flt ")) == nil)
+        assert(PowerTelemetry.registryTemperature(virtual: 3150, raw: nil) == 31.5)
+        assert(abs(PowerTelemetry.registryTemperature(virtual: nil, raw: 3047)! - 31.55) < 0.001)
+        assert(PowerTelemetry.registryTemperature(virtual: nil, raw: 4200) == 42)
+        assert(PowerTelemetry.registryTemperature(virtual: 0, raw: 3100) != nil)
+        assert(PowerTelemetry.registryTemperature(virtual: nil, raw: nil) == nil)
+        assert(PowerTelemetry.validTemperature(.nan) == nil)
+        assert(PowerTelemetry.validTemperature(0) == nil)
+        assert(PowerTelemetry.validTemperature(255) == nil)
+        assert(SMCPowerReader.decode(bytes: [0x1f, 0x80], type: fourCC("sp78")) == 31.5)
         print("Power telemetry regression checks passed.")
     }
 

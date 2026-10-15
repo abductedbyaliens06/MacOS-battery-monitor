@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 
 // Shared surfaces stay neutral so color carries meaning, rather than decorating every row.
-private enum PowerUI {
+enum PowerUI {
     static let mint = Color(red: 0.16, green: 0.66, blue: 0.46)
     static let blue = Color(red: 0.24, green: 0.51, blue: 0.88)
     static let orange = Color(red: 0.87, green: 0.40, blue: 0.14)
@@ -24,6 +24,7 @@ private enum PowerUI {
 
 enum PopoverTab: String, CaseIterable, Identifiable {
     case flow = "Power"
+    case history = "History"
     case health = "Battery"
     case bms = "Hardware"
     case alerts = "Settings"
@@ -33,6 +34,7 @@ enum PopoverTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .flow: return "waveform.path"
+        case .history: return "clock.arrow.circlepath"
         case .health: return "heart"
         case .bms: return "cpu"
         case .alerts: return "slider.horizontal.3"
@@ -75,7 +77,7 @@ struct JuicyMenuView: View {
             .padding(.bottom, 16)
 
             HStack(spacing: 4) {
-                ForEach([PopoverTab.flow, .health, .bms]) { tab in
+                ForEach([PopoverTab.flow, .history, .health, .bms]) { tab in
                     Button { selectedTab = tab } label: {
                         Label(tab.rawValue, systemImage: tab.symbol)
                             .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
@@ -105,6 +107,7 @@ struct JuicyMenuView: View {
                     } else {
                         switch selectedTab {
                         case .flow: PopoverFlowTab(service: service)
+                        case .history: BatteryHistoryView(service: service)
                         case .health: PopoverHealthTab(s: service.snapshot)
                         case .bms:
                             PopoverBMSTab(s: service.snapshot)
@@ -166,7 +169,7 @@ struct JuicyMenuView: View {
     }
 }
 
-private struct Surface<Content: View>: View {
+struct Surface<Content: View>: View {
     let title: String?
     @ViewBuilder let content: Content
 
@@ -290,16 +293,21 @@ struct PopoverFlowTab: View {
     var body: some View {
         let s = service.snapshot
         BatteryHero(s: s)
+        if let session = service.sessions.current ?? service.sessions.completed.first {
+            BatterySessionCard(session: session, active: service.sessions.current != nil)
+        }
         HStack(spacing: 8) {
-            MetricTile(title: "Mac load", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), unit: "W")
-            MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius > 0 ? String(format: "%.1f", s.temperatureCelsius) : "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
+            MetricTile(title: "Mac load", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.systemLoadReadingAvailable), unit: "W")
+            MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius.map { String(format: "%.1f", $0) } ?? "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
             MetricTile(title: "Stored energy", symbol: "battery.75", value: s.currentEnergyWH > 0 ? String(format: "%.1f", s.currentEnergyWH) : "—", unit: "Wh")
         }
+        Text(s.temperatureCelsius == nil ? "Battery temperature unavailable from this Mac's sensors." : "Battery temperature · \(s.temperatureReadingSource)")
+            .font(.system(size: 10)).foregroundStyle(.secondary)
         Surface("Power flow") {
             HStack(spacing: 8) {
                 FlowNode(title: "Charger", symbol: "powerplug", value: PowerUI.watts(s.wallInputWatts, available: s.inputReadingAvailable), active: s.powerState != .discharging)
                 Image(systemName: "arrow.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
-                FlowNode(title: "Mac", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), active: true)
+                FlowNode(title: "Mac", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.systemLoadReadingAvailable), active: true)
                 Image(systemName: s.liveWatts < 0 ? "arrow.left" : "arrow.right").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
                 FlowNode(title: "Battery", symbol: "battery.75", value: PowerUI.watts(abs(s.liveWatts), available: s.powerReadingAvailable), active: s.powerReadingAvailable && abs(s.liveWatts) > 0.05)
             }
@@ -327,8 +335,10 @@ struct PopoverFlowTab: View {
                     ForEach(service.history) { sample in
                         LineMark(x: .value("Time", sample.timestamp), y: .value("Watts", sample.batteryWatts), series: .value("Series", "Battery"))
                             .foregroundStyle(PowerUI.mint).lineStyle(StrokeStyle(lineWidth: 2))
-                        LineMark(x: .value("Time", sample.timestamp), y: .value("Watts", sample.systemLoadWatts), series: .value("Series", "Mac"))
-                            .foregroundStyle(PowerUI.blue).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        if let load = sample.systemLoadWatts {
+                            LineMark(x: .value("Time", sample.timestamp), y: .value("Watts", load), series: .value("Series", "Mac"))
+                                .foregroundStyle(PowerUI.blue).lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        }
                     }
                     RuleMark(y: .value("Zero", 0)).foregroundStyle(Color.primary.opacity(0.15))
                 }
@@ -466,8 +476,10 @@ struct PopoverBMSTab: View {
 
 struct PopoverAlertsTab: View {
     @ObservedObject var service: BatteryService
+    @State private var confirmingClear = false
     var body: some View {
         Text("Make it yours").font(.system(size: 22, weight: .semibold, design: .rounded)).padding(.bottom, 2)
+        Text("Your display and alert preferences are saved automatically on this Mac.").font(.system(size: 11)).foregroundStyle(.secondary)
         Surface("Menu bar") {
             Picker("Display", selection: $service.labelStyle) {
                 ForEach(MenuBarLabelStyle.allCases) { Text($0.rawValue).tag($0) }
@@ -506,7 +518,17 @@ struct PopoverAlertsTab: View {
                 Button("Preview low glow") { service.triggerScreenEdgeGlow(color: .systemOrange) }
             }.buttonStyle(.bordered).controlSize(.small)
         }
+        Surface("Local history") {
+            Text("Seven days of minute averages and up to 50 recent battery sessions are saved only on this Mac. History is saved about once a minute and when the app quits normally.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            Button("Clear local history…", role: .destructive) { confirmingClear = true }
+                .confirmationDialog("Clear battery history and session summaries?", isPresented: $confirmingClear) {
+                    Button("Clear local history", role: .destructive) { service.clearLocalHistory() }
+                } message: { Text("This removes saved charts and sessions. Your display and alert preferences are kept.") }
+            if let message = service.storageMessage { Text(message).font(.system(size: 11)).foregroundStyle(.orange) }
+        }
     }
+
 }
 
 private struct ThresholdSlider: View {
@@ -567,5 +589,43 @@ struct CompactRow: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct BatterySessionCard: View {
+    let session: BatterySession
+    let active: Bool
+    private var duration: String {
+        let minutes = Int(session.observedSeconds / 60)
+        return minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h \(minutes % 60)m"
+    }
+    var body: some View {
+        Surface {
+            HStack {
+                Label(active ? (session.startedAtUnplug ? "Since unplugging" : "Monitoring on battery") : "Last battery session", systemImage: "battery.75")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(session.startedAt, style: .time).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .firstTextBaseline) {
+                statistic(duration, label: "observed")
+                Spacer()
+                statistic("\(session.percentagePointsUsed)%", label: "battery used")
+                Spacer()
+                statistic(session.averageDrawWatts.map { String(format: "%.1f W", $0) } ?? "—", label: "average draw")
+            }
+            Text(session.measuredSeconds >= 1
+                 ? String(format: "%.2f Wh measured · %.0f%% power coverage", session.energyUsedWh, session.coverage * 100)
+                 : "Collecting power samples…")
+                .font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+            Text("Observed time excludes sleep and gaps. Sessions start fresh when monitoring resumes.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+    private func statistic(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value).font(.system(size: 19, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
     }
 }

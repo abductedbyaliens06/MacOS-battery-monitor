@@ -1,18 +1,14 @@
-Run the telemetry regression checks from the project directory:
+Run all regression checks from the project directory:
 
 ```sh
-swiftc -module-cache-path /tmp/battery-swift-cache \
-  'battery stuff/PowerTelemetry.swift' \
-  'battery stuff/SMCPowerReader.swift' \
-  Tests/PowerTelemetryTests.swift \
-  -o /tmp/battery-telemetry-tests
-/tmp/battery-telemetry-tests
+./scripts/check.sh
 ```
 
-Checks cover unsigned signed-current decoding, delayed charging samples after unplugging,
-missing and invalid telemetry, and integer/float SMC payload formats.
+The four executable suites cover:
 
-Live hardware validation requires running the app: the command-line tool sandbox blocks
-SMC access. The app retains its sandbox with an IOKit client exception for the read-only
-SMC reader. Health data falls back to AppleSmartBattery; unsupported live sensors use
-slower registry power data, labeled in the popover footer.
+- Telemetry: unsigned signed-current decoding, delayed charging samples after unplugging, missing/invalid telemetry, temperature units and SMC payload decoding.
+- Preferences: persistence across store instances, safe defaults for corrupt data, and threshold bounds. Tests use a disposable UserDefaults suite.
+- Sessions: time-weighted energy, charging transitions, invalid readings, measurement coverage, sleep gaps, and restart boundaries.
+- History: minute aggregation, sample-weighted downsampling, chart gaps, retention, archive validation, atomic write ordering, and corrupt JSON handling. Tests use temporary files.
+
+Tests do not change charging state or write SMC keys. Validate physical plug/unplug and sleep/wake behavior with the app running. Model-dependent SMC access must also be checked in the signed, sandboxed app. Command-line access may be restricted.
