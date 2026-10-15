@@ -14,18 +14,6 @@ enum PowerState: String {
     case unknown = "Unknown"
 }
 
-enum MenuBarLabelStyle: String, CaseIterable, Identifiable {
-    case percentAndWatts = "Percentage + Battery Watts"
-    case wattsOnly = "Battery Watts (Default)"
-    case inputWatts = "Charger Input Watts"
-    case systemWatts = "System Load Watts"
-    case percentAndSysLoad = "91% • Sys 8.3W"
-    case percentAndTemp = "91% • 31.2°C"
-    case percentOnly = "91% (Compact)"
-    
-    var id: String { rawValue }
-}
-
 struct PowerSample: Identifiable {
     let id = UUID()
     let timestamp: Date
@@ -110,18 +98,19 @@ final class BatteryService: ObservableObject {
     @Published var rawRegistryPairs: [(key: String, value: String)] = []
     
     // Menu Bar Appearance
-    @Published var labelStyle: MenuBarLabelStyle = .wattsOnly
+    @Published var labelStyle: MenuBarLabelStyle = .wattsOnly { didSet { savePreferences() } }
     
     // Session Statistics
     @Published var sessionPeakDrawWatts: Double = 0.0
     @Published var sessionPeakChargeWatts: Double = 0.0
     
     // Custom Alerts & Screen Glow
-    @Published var alertsEnabled: Bool = true
-    @Published var screenGlowEnabled: Bool = true
-    @Published var lowBatteryThreshold: Double = 20.0
-    @Published var highChargeLimitThreshold: Double = 80.0
+    @Published var alertsEnabled: Bool = true { didSet { savePreferences() } }
+    @Published var screenGlowEnabled: Bool = true { didSet { savePreferences() } }
+    @Published var lowBatteryThreshold: Double = 20.0 { didSet { savePreferences() } }
+    @Published var highChargeLimitThreshold: Double = 80.0 { didSet { savePreferences() } }
     
+    private let preferencesStore = BatteryPreferencesStore()
     private let smc = SMCPowerReader()
     private var powerSourceRunLoopSource: CFRunLoopSource?
     private var lastRegistryToken: String?
@@ -131,6 +120,12 @@ final class BatteryService: ObservableObject {
     private var glowWindow: NSWindow?
     
     init() {
+        let preferences = preferencesStore.load()
+        labelStyle = preferences.labelStyle
+        alertsEnabled = preferences.alertsEnabled
+        screenGlowEnabled = preferences.screenGlowEnabled
+        lowBatteryThreshold = preferences.lowBatteryThreshold
+        highChargeLimitThreshold = preferences.highChargeLimitThreshold
         requestNotificationPermissions()
         refresh()
         startMonitoring(interval: 1.0)
@@ -146,6 +141,12 @@ final class BatteryService: ObservableObject {
             CFRunLoopSourceInvalidate(source)
         }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    private func savePreferences() {
+        preferencesStore.save(BatteryPreferences(labelStyle: labelStyle, alertsEnabled: alertsEnabled,
+                                                screenGlowEnabled: screenGlowEnabled, lowBatteryThreshold: lowBatteryThreshold,
+                                                highChargeLimitThreshold: highChargeLimitThreshold))
     }
 
     private func installPowerNotifications() {

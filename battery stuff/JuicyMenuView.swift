@@ -470,6 +470,7 @@ struct PopoverAlertsTab: View {
     @ObservedObject var service: BatteryService
     var body: some View {
         Text("Make it yours").font(.system(size: 22, weight: .semibold, design: .rounded)).padding(.bottom, 2)
+        Text("Your display and alert preferences are saved automatically on this Mac.").font(.system(size: 11)).foregroundStyle(.secondary)
         Surface("Menu bar") {
             Picker("Display", selection: $service.labelStyle) {
                 ForEach(MenuBarLabelStyle.allCases) { Text($0.rawValue).tag($0) }

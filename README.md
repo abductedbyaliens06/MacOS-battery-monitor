@@ -18,6 +18,7 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 ## Features
 
 - **Live battery power:** signed wattage, sampled approximately once per second when supported SMC sensors are available.
+- **Saved preferences:** menu bar appearance, alerts, glow, and thresholds survive app restarts.
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.
 - **Power dashboard:** charging status, battery level, temperature, stored energy, power flow, and a rolling two-minute chart.
 - **Battery temperature:** read-only SMC battery sensor with registry fallback; unavailable readings remain clearly marked.
@@ -124,4 +125,4 @@ battery stuff.xcodeproj/          # Xcode project
 
 This version is a monitoring tool. It does not automatically optimize other apps, limit charging, change CPU/GPU power settings, or guarantee longer battery life. Charge targets trigger alerts; they do not stop charging.
 
-Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences, alert settings, and session history currently reset when the app restarts. Battery readings stay local; the app contains no network requests or analytics.
+Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. Session history currently resets when the app restarts. Battery readings stay local; the app contains no network requests or analytics.
