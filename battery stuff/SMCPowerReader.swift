@@ -38,6 +38,13 @@ final class SMCPowerReader {
         return Reading(voltageV: voltage, currentA: current, adapterWatts: input)
     }
 
+    /// TB0T is the battery hotspot; older machines may expose only cell sensors.
+    /// Temperature is read independently so a missing power sensor cannot hide it.
+    func readBatteryTemperature() -> Double? {
+        if let value = readSensor("TB0T").flatMap({ PowerTelemetry.validTemperature($0) }) { return value }
+        return ["TB1T", "TB2T"].compactMap { readSensor($0).flatMap { PowerTelemetry.validTemperature($0) } }.max()
+    }
+
     private func readSensor(_ key: String) -> Double? {
         guard connection != 0 else { return nil }
         let code = key.utf8.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }

@@ -292,9 +292,11 @@ struct PopoverFlowTab: View {
         BatteryHero(s: s)
         HStack(spacing: 8) {
             MetricTile(title: "Mac load", symbol: "laptopcomputer", value: PowerUI.watts(s.systemLoadWatts, available: s.powerReadingAvailable), unit: "W")
-            MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius > 0 ? String(format: "%.1f", s.temperatureCelsius) : "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
+            MetricTile(title: "Temperature", symbol: "thermometer.medium", value: s.temperatureCelsius.map { String(format: "%.1f", $0) } ?? "—", unit: "°C", tint: s.isThermalWarning ? .red : .primary)
             MetricTile(title: "Stored energy", symbol: "battery.75", value: s.currentEnergyWH > 0 ? String(format: "%.1f", s.currentEnergyWH) : "—", unit: "Wh")
         }
+        Text(s.temperatureCelsius == nil ? "Battery temperature unavailable from this Mac's sensors." : "Battery temperature · \(s.temperatureReadingSource)")
+            .font(.system(size: 10)).foregroundStyle(.secondary)
         Surface("Power flow") {
             HStack(spacing: 8) {
                 FlowNode(title: "Charger", symbol: "powerplug", value: PowerUI.watts(s.wallInputWatts, available: s.inputReadingAvailable), active: s.powerState != .discharging)

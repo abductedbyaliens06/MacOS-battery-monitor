@@ -49,7 +49,7 @@ struct PowerMenuBarLabel: View {
         case .systemWatts: return s.powerReadingAvailable ? String(format: "%.1f W", s.systemLoadWatts) : "— W"
         case .percentAndWatts: return "\(s.percentage)% \(battery)"
         case .percentAndSysLoad: return s.powerReadingAvailable ? String(format: "%d%% · %.1f W", s.percentage, s.systemLoadWatts) : "\(s.percentage)% · — W"
-        case .percentAndTemp: return String(format: "%d%% · %.1f°C", s.percentage, s.temperatureCelsius)
+        case .percentAndTemp: return "\(s.percentage)% · " + (s.temperatureCelsius.map { String(format: "%.1f°C", $0) } ?? "—°C")
         case .percentOnly: return "\(s.percentage)%"
         }
     }

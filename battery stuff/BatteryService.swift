@@ -32,7 +32,7 @@ struct PowerSample: Identifiable {
     let batteryWatts: Double
     let systemLoadWatts: Double
     let wallWatts: Double
-    let temperatureC: Double
+    let temperatureC: Double?
     let percentage: Int
 }
 
@@ -75,7 +75,8 @@ struct BatterySnapshot {
     var conditionText: String = "Normal"
     
     // Thermal & Per-Cell Telemetry
-    var temperatureCelsius: Double = 0.0
+    var temperatureCelsius: Double? = nil
+    var temperatureReadingSource = "Unavailable"
     var isThermalWarning: Bool = false
     var cellVoltagesMV: [Int] = []
     var cellDeltaMV: Int = 0
@@ -371,22 +372,15 @@ final class BatteryService: ObservableObject {
             next.adapterLossWatts = max(0, (powerTelemetry["AdapterEfficiencyLoss"] as? NSNumber)?.doubleValue ?? 0) / 1000
         }
 
-        // 6. Temperature (VirtualTemperature in 0.01°C vs Temperature in 0.1K)
-        if let virtualTemp = (mergedProps["VirtualTemperature"] as? NSNumber)?.doubleValue
-            ?? (batteryData["VirtualTemperature"] as? NSNumber)?.doubleValue,
-           virtualTemp > 0 {
-            next.temperatureCelsius = virtualTemp / 100.0
-        } else if let rawTemp = (mergedProps["Temperature"] as? NSNumber)?.doubleValue
-            ?? (batteryData["Temperature"] as? NSNumber)?.doubleValue,
-                  rawTemp > 0 {
-            if rawTemp > 2400 && rawTemp < 3500 {
-                next.temperatureCelsius = (rawTemp / 10.0) - 273.15
-            } else {
-                next.temperatureCelsius = rawTemp / 100.0
-            }
-        }
-        next.isThermalWarning = next.temperatureCelsius >= 40.0
-        
+        // 6. Some macOS versions omit temperature from AppleSmartBattery entirely.
+        let registryTemperature = PowerTelemetry.registryTemperature(
+            virtual: (mergedProps["VirtualTemperature"] as? NSNumber)?.doubleValue ?? (batteryData["VirtualTemperature"] as? NSNumber)?.doubleValue,
+            raw: (mergedProps["Temperature"] as? NSNumber)?.doubleValue ?? (batteryData["Temperature"] as? NSNumber)?.doubleValue)
+        let sensorTemperature = smc.readBatteryTemperature()
+        next.temperatureCelsius = sensorTemperature ?? registryTemperature
+        next.temperatureReadingSource = sensorTemperature != nil ? "Live SMC" : (registryTemperature != nil ? "Battery registry" : "Unavailable")
+        next.isThermalWarning = next.temperatureCelsius.map { $0 >= 40 } ?? false
+
         // 7. Per-Cell Voltages (3S Pack)
         if let cells = batteryData["CellVoltage"] as? [NSNumber] {
             let validCells = cells.map { $0.intValue }.filter { $0 > 2500 }
