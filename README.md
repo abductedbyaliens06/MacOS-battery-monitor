@@ -107,6 +107,7 @@ These checks cover telemetry and temperature decoding, preference persistence, s
 ```text
 battery stuff/
 ├── BatteryMonitorApp.swift       # App entry point and colored menu bar label
+├── BatteryStatusController.swift # Native status button; dashboard exists only while open
 ├── BatteryService.swift          # Monitoring, telemetry, history, and alerts
 ├── BatteryPreferences.swift     # Saved menu bar and alert preferences
 ├── BatterySessions.swift        # Observed sessions and measured energy

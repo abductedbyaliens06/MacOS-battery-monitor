@@ -3,32 +3,32 @@ import AppKit
 
 @main
 struct BatteryMonitorApp: App {
-    @StateObject private var batteryService = BatteryService()
-
-    init() {
-        NSApplication.shared.setActivationPolicy(.accessory)
-    }
+    @NSApplicationDelegateAdaptor(BatteryAppDelegate.self) private var delegate
 
     var body: some Scene {
-        MenuBarExtra {
-            JuicyMenuView(service: batteryService)
-        } label: {
-            PowerMenuBarLabel(snapshot: batteryService.snapshot, style: batteryService.labelStyle)
-        }
-        .menuBarExtraStyle(.window)
+        Settings { EmptyView() }
     }
 }
 
-/// A non-template image preserves wattage colors in the macOS status bar.
-struct PowerMenuBarLabel: View {
+@MainActor
+final class BatteryAppDelegate: NSObject, NSApplicationDelegate {
+    private var statusController: BatteryStatusController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        statusController = BatteryStatusController(service: BatteryService())
+    }
+}
+
+/// Draw directly into the native status button, outside SwiftUI's scene graph.
+struct PowerMenuBarLabel {
     let snapshot: BatterySnapshot
     let style: MenuBarLabelStyle
-    @Environment(\.colorScheme) private var colorScheme
+    let colorScheme: ColorScheme
 
-    var body: some View {
-        Image(nsImage: renderedLabel())
-            .accessibilityLabel("\(snapshot.powerState.rawValue), \(title)")
-            .help("\(snapshot.powerState.rawValue) · \(snapshot.powerReadingSource)\n+ charging / − draining · Green = charging · Blue = charger input · Warm colors = drain / load")
+    var accessibilityLabel: String { "\(snapshot.powerState.rawValue), \(title)" }
+    var toolTip: String {
+        "\(snapshot.powerState.rawValue) · \(snapshot.powerReadingSource)\n+ charging / − draining · Green = charging · Blue = charger input · Warm colors = drain / load"
     }
 
     private var displayedWatts: Double {
@@ -65,7 +65,7 @@ struct PowerMenuBarLabel: View {
         }
     }
 
-    private func renderedLabel() -> NSImage {
+    func renderedLabel() -> NSImage {
         let tint: NSColor
         if !snapshot.powerReadingAvailable || style == .percentOnly || style == .percentAndTemp {
             tint = colorScheme == .dark ? .white : .black
