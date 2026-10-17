@@ -163,6 +163,11 @@ nonisolated struct StudyAccumulator {
             if app == nil { app = apps[cursor.pid] }
             guard let parent = processes[cursor.parent] else { break }
             if python(parent) { pythonRoot = parent }
+            else if pythonRoot != nil {
+                // A shell/IDE/test launcher separates independent Python jobs.
+                // Do not merge a job into an unrelated Python ancestor above it.
+                break
+            }
             cursor = parent
         }
         if let root = pythonRoot { return StudyApp(key: "job:\(root.identity)", name: "\(root.name) · PID \(root.pid)") }

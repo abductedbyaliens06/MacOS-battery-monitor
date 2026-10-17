@@ -64,6 +64,9 @@ import Foundation
         let tree = [root.pid: root, child.pid: child]
         let family = StudyAccumulator.group(for: child, processes: tree, apps: [10: StudyApp(key: "terminal", name: "Terminal")])
         check(family.key == "job:20:1", "Python children stay in their job instead of merging with the terminal")
+        let launcher = process(0, pid: 10, parent: 9, name: "TestLauncher")
+        let unrelatedPython = process(0, pid: 9, parent: 1)
+        check(StudyAccumulator.group(for: child, processes: [21: child, 20: root, 10: launcher, 9: unrelatedPython], apps: [:]).key == "job:20:1", "A non-Python launcher separates independent job families")
         let browser = process(0, pid: 30, parent: 1, name: "Browser")
         let helper = process(0, pid: 31, parent: 30, name: "Renderer")
         check(StudyAccumulator.group(for: helper, processes: [30: browser, 31: helper], apps: [30: StudyApp(key: "browser", name: "Browser")]).key == "browser", "App helpers group with their parent app")

@@ -107,7 +107,7 @@ final class UsageStudyService: ObservableObject {
         if let data = defaults.data(forKey: "study.labels.v1"), data.count < 1_000_000,
            let saved = try? JSONDecoder().decode([String: StudyImportance].self, from: data), saved.count <= 5000 { labels = saved }
         else { labels = [:] }
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("BatteryMonitor")
+        let directory = BatteryDataLocations.directory
         worker = UsageStudyWorker(url: url ?? directory.appendingPathComponent("usage-study-v1.sqlite"))
         if let initialReport { report = initialReport }
         guard startAutomatically else { return }

@@ -27,3 +27,6 @@ swiftc -module-cache-path /tmp/battery-swift-cache \
   'battery stuff/UsageStudyModels.swift' 'battery stuff/UsageStudyStore.swift' \
   Tests/UsageStudyTests.swift -o "$check_dir/usage-study"
 "$check_dir/usage-study"
+swiftc -module-cache-path /tmp/battery-swift-cache \
+  'battery stuff/BatteryDataLocations.swift' Tests/BatteryDataLocationsTests.swift -o "$check_dir/data-locations"
+"$check_dir/data-locations"

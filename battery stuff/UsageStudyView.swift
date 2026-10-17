@@ -70,9 +70,12 @@ struct UsageStudyView: View {
                 }
                 Text("\(study.unavailableProcesses) unavailable in latest scan · \(study.report.newProcesses) new counter baselines. Counters may be restricted, or processes may exit between reads.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
-                if study.discoveryLimited || study.report.discoveryLimitedSamples > 0 {
+                if study.discoveryLimited {
                     Text("Process discovery is restricted in this build. Other-app rankings are unavailable; the study is incomplete.")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.orange)
+                } else if study.report.discoveryLimitedSamples > 0 {
+                    Text("Earlier intervals in this period had restricted process discovery. Rankings cover readable intervals only.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 if study.unavailableProcesses > study.readableProcesses {
                     Text("Process access is limited. This report cannot rank all of your apps; missing counters are not zero usage.")

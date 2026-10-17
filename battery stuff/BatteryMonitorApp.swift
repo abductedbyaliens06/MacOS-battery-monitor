@@ -17,6 +17,7 @@ final class BatteryAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        BatteryDataLocations.importPreferences()
         let battery = BatteryService()
         let study = UsageStudyService(battery: battery)
         self.study = study
