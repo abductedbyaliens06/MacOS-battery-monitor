@@ -9,8 +9,9 @@ struct OptimizerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Running-task optimizer").font(.system(size: 21, weight: .semibold, design: .rounded))
-            Label("Automatic discovery · preview only", systemImage: "shield.lefthalf.filled")
+            Label("Automatic discovery · selective scheduling", systemImage: "shield.lefthalf.filled")
                 .font(.system(size: 11)).foregroundStyle(PowerUI.mint)
+            SchedulingControlView(control: optimizer.liveControl, optimizer: optimizer)
             LiveProcessView(study: study, optimizer: optimizer)
             if let message = optimizer.message { Text(message).font(.system(size: 11)).foregroundStyle(.secondary) }
             Surface("Your constraints") {

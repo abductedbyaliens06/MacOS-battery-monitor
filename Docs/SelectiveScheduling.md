@@ -1,6 +1,6 @@
 # Selective scheduling mechanism · proposed administrator boundary
 
-Status: real scheduling mechanism tested on a temporary test process. Administrator integration is **not approved, built into the app, installed, or active**. The installed v1.3.1 remains a preview. No battery-life improvement is established.
+Status: the user approved temporary administrator integration on 18 October 2026. The helper is now packaged as a native Xcode command-line target, with explicit opt-in controls and no persistent service. Real self-policy changes/restoration are tested; administrator authentication and cross-process verification are pending. No battery-life improvement is established.
 
 ## Intended behavior
 
@@ -33,13 +33,13 @@ Removing a target, connecting power, missing a heartbeat for 12 seconds, app exi
 
 A forced guardian kill or crash cannot execute cleanup. Its root-owned journal is intended for recovery on the next authorized launch; until recovery has been verified, the app must show restoration as unconfirmed and permit no new adjustments. A worker may remain at reduced scheduling priority until recovery or its own exit. This is a remaining operational risk, not a hardware voltage/current risk. Recovery, sleep/wake, cross-process rights, IPC authentication and daemon failure paths still need administrator-session integration tests. The helper is a prototype and has not had an independent security review.
 
-The proposed connection/client sources are under `Prototypes/SchedulingControl/`, outside Xcode's compiled source folder. The Xcode build-script sandbox remains enabled. No helper packaging phase or privileged service registration has been added.
+The approved connection/client sources are now in the app. A native tool target and CodeSignOnCopy build phase package the helper under `Contents/Helpers`; no shell build phase was added and the Xcode build-script sandbox remains enabled. Optimization is off at launch. The UI exposes an authorization command, connection status, explicit enable/pause and a recovery-only command when restoration is unconfirmed.
 
 ## Approval and remaining validation
 
-Automatic approval review rejected a proposed step to embed the root-capable helper and disable Xcode's build-script sandbox, citing an unauthorized privileged process-control boundary and an unnecessary sandbox change. That step did not execute. The sandbox change is withdrawn. Explicit user approval is needed before privileged integration and an administrator session; no bypass is being used.
+Automatic approval review rejected a proposed step to embed the root-capable helper and disable Xcode's build-script sandbox, citing an unauthorized privileged process-control boundary and an unnecessary sandbox change. That step did not execute. The sandbox change is withdrawn. The user subsequently approved the temporary administrator helper. Integration now uses native build phases without changing the build-script sandbox. Administrator authentication is requested through macOS, not collected in chat; no bypass is being used.
 
-Following approval, the necessary gates are:
+The necessary runtime and measurement gates remain:
 
 1. Package the helper without disabling the build-script sandbox, authenticate the session, and validate real access and rollback against temporary **user-owned** worker processes first. Do not activate policies for real user work until those checks pass.
 2. Test stale-heartbeat, normal quit, app crash, guardian crash/recovery, PID reuse, foreground changes, power connection and sleep/wake. Verify both policy state and child non-inheritance.
@@ -53,4 +53,12 @@ Do not claim the full optimizer is complete based on successful policy changes o
 
 The [counterbalanced pilot](../Tools/SchedulingBenchmark/README.md) is now available independently of administrator integration. It exercises the actual scheduling policy on a disposable workload that changes only its **own** task policy. A separate synthetic foreground probe and read-only SMC collector measure throughput, latency and battery energy. It never controls discovered user processes, uses the administrator helper or changes display/LPM settings.
 
-The native fixture protocol, active-policy EOF restoration and nine analysis checks pass. The AC-power preflight was run on the current machine: it produced an inconclusive report with zero trials and launched no workload fixtures. Thus there is still no evidence of battery savings. The harness can gather that next on battery, without substituting synthetic probe performance for real application validation. No administrator authorization has been received, and privileged integration remains inactive.
+The native fixture protocol, active-policy EOF restoration and nine analysis checks pass. The AC-power preflight was run on the current machine: it produced an inconclusive report with zero trials and launched no workload fixtures. Thus there is still no evidence of battery savings. The harness can gather that next on battery, without substituting synthetic probe performance for real application validation. The user has approved integration, while macOS administrator authentication is still pending. No live user-worker adjustments have been activated.
+
+## Disposable-worker startup and independent recovery
+
+Every `--serve UID APP_PID` startup first runs `--verify UID`: it forks a bounded child, drops all supplementary groups and switches that child to the console user, captures its task identity, then attempts policy apply/read-back/exact restoration. The child independently checks that its original policy is restored. Any denied right or failed check prevents the server from opening. The temporary child exits; no discovered process is used for this check. It is not a complete privileged IPC, recovery or efficiency test.
+
+`--recover UID` is available independently of the disposable-worker gate. It obtains the guardian lock and restores only journaled original policies; it cannot enable new optimizations. A failed startup check therefore does not itself prevent a recovery attempt. Stop any still-running guardian before using it. PID/start checks, root-owned journal validation and policy-conflict checks still apply.
+
+The helper restricts the target UID to the current console user, authenticates the actual socket peer PID, validates Python identity again immediately before applying, and continuously verifies live policy read-back. An unprivileged spoof-server test verifies that the client closes the connection before sending target data. These checks reduce risk but do not establish that the software cannot fail.

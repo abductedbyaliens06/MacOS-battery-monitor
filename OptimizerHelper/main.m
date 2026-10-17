@@ -13,7 +13,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <time.h>
+#include <strings.h>
 #include "SchedulingLease.h"
+#include "Verification.h"
 
 /* Temporary, explicitly launched root guardian, not a persistent install.
  * No shell, exec, file-path request, memory access, process signal or hardware
@@ -25,7 +27,7 @@ static uint64_t startOf(struct proc_bsdinfo *p){return p->pbi_start_tvsec*100000
 static BOOL identity(pid_t pid,uid_t uid,uint64_t started,struct proc_bsdinfo *out){
     return pid>1&&proc_pidinfo(pid,PROC_PIDTBSDINFO,0,out,sizeof(*out))==sizeof(*out)&&out->pbi_uid==uid&&startOf(out)==started;
 }
-static BOOL python(struct proc_bsdinfo *p){return strncmp(p->pbi_comm,"python",6)==0||strncmp(p->pbi_comm,"pytest",6)==0;}
+static BOOL python(struct proc_bsdinfo *p){return strncasecmp(p->pbi_comm,"python",6)==0||strncasecmp(p->pbi_comm,"pytest",6)==0;}
 static BOOL onBattery(void){
     CFTypeRef info=IOPSCopyPowerSourcesInfo();if(!info)return NO;
     CFStringRef source=IOPSGetProvidingPowerSourceType(info);
@@ -78,6 +80,18 @@ static BOOL recover(NSString *path,uid_t uid){
     }
     return durableWrite(path,[NSData dataWithBytes:"[]" length:2]);
 }
+static int recoverOnly(uid_t uid){
+    NSString *base=[NSString stringWithFormat:@"/var/run/battery-optimizer-%u",uid];
+    int lock=open([base stringByAppendingString:@".lock"].fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW,0600);
+    struct stat st;
+    if(lock<0||fstat(lock,&st)!=0||st.st_uid!=0||!S_ISREG(st.st_mode)||st.st_nlink!=1||flock(lock,LOCK_EX|LOCK_NB)!=0){
+        if(lock>=0)close(lock);fprintf(stderr,"Stop the live guardian before recovery.\n");return 3;
+    }
+    BOOL ok=recover([base stringByAppendingString:@".json"],uid);close(lock);
+    if(ok)puts("Recorded original scheduling policies restored. No new adjustments applied.");
+    else fprintf(stderr,"Recovery could not be verified. Journal preserved; no new adjustments applied.\n");
+    return ok?0:3;
+}
 static BOOL restoreAll(BOSchedulingLease *leases,NSString *path,uid_t uid){
     BOOL ok=YES, changed=NO;
     for(int i=0;i<16;i++)if(leases[i].port){
@@ -125,6 +139,14 @@ static int serve(uid_t uid,pid_t app){
         pid_t foreground=NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
         BOOL battery=onBattery();
         if(now-last>12||!battery){if(!restoreAll(leases,journalPath,uid)){failed=YES;break;}}
+        for(int i=0;i<16;i++)if(leases[i].pending){
+            BOProcessPolicy actual;int readback=BOReadPolicy(leases[i].port,&actual);
+            if(readback==KERN_TERMINATED||readback==MACH_SEND_INVALID_DEST){
+                leases[i].pending=false;mach_port_deallocate(mach_task_self(),leases[i].port);memset(&leases[i],0,sizeof(leases[i]));
+                if(!journal(journalPath,leases,uid)){failed=YES;break;}
+            }else if(readback!=0||!BOPolicyEqual(&actual,&leases[i].applied)){failed=YES;break;}
+        }
+        if(failed)break;
         for(int i=0;i<16;i++)if(leases[i].pending&&protectedByForeground(leases[i].pid,foreground,uid)){
             int r=BORestorePolicy(&leases[i]);if(r!=0){failed=YES;break;}mach_port_deallocate(mach_task_self(),leases[i].port);memset(&leases[i],0,sizeof(leases[i]));
             if(!journal(journalPath,leases,uid)){failed=YES;break;}
@@ -177,7 +199,10 @@ static int serve(uid_t uid,pid_t app){
             if(reason){if(l.port)mach_port_deallocate(mach_task_self(),l.port);[blocked addObject:@{@"pid":@(pid),@"reason":reason}];continue;}
             l.pending=true;leases[slot]=l;
             if(!journal(journalPath,leases,uid)){failed=YES;break;}
-            int r=BOApplyPolicy(&leases[slot]);
+            struct proc_bsdinfo latest={0};
+            BOOL stillEligible=identity(pid,uid,started,&latest)&&python(&latest)&&!(latest.pbi_flags&PROC_FLAG_APPLICATION)&&
+                !protectedByForeground(pid,NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier,uid);
+            int r=stillEligible?BOApplyPolicy(&leases[slot]):KERN_ABORTED;
             if(r!=0){[blocked addObject:@{@"pid":@(pid),@"reason":[NSString stringWithFormat:@"Apply/read-back failed (%d)",r]}];if(BORestorePolicy(&leases[slot])!=0){failed=YES;break;}mach_port_deallocate(mach_task_self(),leases[slot].port);memset(&leases[slot],0,sizeof(leases[slot]));}
             if(!journal(journalPath,leases,uid)){failed=YES;break;}
         }
@@ -193,11 +218,20 @@ static int serve(uid_t uid,pid_t app){
     return restored&&!failed?0:3;
 }
 int main(int argc,const char **argv){@autoreleasepool{
-    if(argc!=4||strcmp(argv[1],"--serve")!=0){fprintf(stderr,"Usage: BatteryOptimizerHelper --serve <user-uid> <running-app-pid>\n");return 2;}
+    BOOL verifyOnly=argc==3&&strcmp(argv[1],"--verify")==0;
+    BOOL recoveryOnly=argc==3&&strcmp(argv[1],"--recover")==0;
+    BOOL serving=argc==4&&strcmp(argv[1],"--serve")==0;
+    if(!verifyOnly&&!recoveryOnly&&!serving){fprintf(stderr,"Usage: BatteryOptimizerHelper --verify/--recover <user-uid> OR --serve <user-uid> <app-pid>\n");return 2;}
     char *end=NULL;unsigned long uid=strtoul(argv[2],&end,10);if(!*argv[2]||*end||uid<501||uid>UINT_MAX)return 2;
-    long app=strtol(argv[3],&end,10);if(!*argv[3]||*end||app<=1||app>INT_MAX)return 2;
     if(geteuid()!=0){fprintf(stderr,"Administrator authorization is required. No changes made.\n");return 2;}
-    const char *sudoUID=getenv("SUDO_UID");if(!sudoUID||strtoul(sudoUID,NULL,10)!=uid){fprintf(stderr,"Launch with sudo from the target user's Terminal.\n");return 2;}
+    struct stat console;
+    if(stat("/dev/console",&console)!=0||console.st_uid!=uid){fprintf(stderr,"The target must be the current console user.\n");return 2;}
+    const char *sudoUID=getenv("SUDO_UID");if(sudoUID&&strtoul(sudoUID,NULL,10)!=uid)return 2;
+    signal(SIGPIPE,SIG_IGN);
+    if(recoveryOnly)return recoverOnly((uid_t)uid);
+    if(verifyOnly)return BOVerifyCrossProcess((uid_t)uid);
+    long app=strtol(argv[3],&end,10);if(!*argv[3]||*end||app<=1||app>INT_MAX)return 2;
+    if(BOVerifyCrossProcess((uid_t)uid)!=0){fprintf(stderr,"Disposable-worker safety gate failed. Server will not start.\n");return 3;}
     [NSApplication.sharedApplication setActivationPolicy:NSApplicationActivationPolicyProhibited];
     return serve((uid_t)uid,(pid_t)app);
 }}

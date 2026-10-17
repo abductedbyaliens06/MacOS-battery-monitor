@@ -53,3 +53,14 @@ nonisolated enum SchedulingControlPolicy {
         return targets
     }
 }
+
+/// A lost acknowledgement can follow a successful mutation. Keep recovery
+/// uncertainty even before the first applied-policy reply, and across Pause.
+nonisolated struct SchedulingAcknowledgement {
+    private(set) var mayHaveApplied = false
+    mutating func sending(nonempty: Bool) { if nonempty { mayHaveApplied = true } }
+    mutating func received(_ reply: SchedulingReply) {
+        if !reply.active.isEmpty { mayHaveApplied = true }
+        else if !reply.failed { mayHaveApplied = false }
+    }
+}

@@ -33,6 +33,19 @@ import Foundation
         let good = Data(#"{"version":1,"active":["100:123"],"blocked":[],"failed":false,"onBattery":true}"#.utf8)
         check(try SchedulingReply.decode(good).active == ["100:123"],"Bounded reply decodes")
         do { _ = try SchedulingReply.decode(Data(#"{"version":99,"active":[],"blocked":[],"failed":false,"onBattery":true}"#.utf8)); check(false,"Unknown protocol must fail") } catch {}
+        var acknowledgement = SchedulingAcknowledgement()
+        acknowledgement.sending(nonempty: true)
+        check(acknowledgement.mayHaveApplied, "Lost first reply must not claim no changes")
+        acknowledgement.sending(nonempty: false)
+        check(acknowledgement.mayHaveApplied, "Sending Pause alone does not prove restoration")
+        let failedEmpty = try SchedulingReply.decode(Data(#"{"version":1,"active":[],"blocked":[],"failed":true,"onBattery":true}"#.utf8))
+        acknowledgement.received(failedEmpty)
+        check(acknowledgement.mayHaveApplied, "A failed empty reply cannot clear recovery uncertainty")
+        let restored = try SchedulingReply.decode(Data(#"{"version":1,"active":[],"blocked":[],"failed":false,"onBattery":true}"#.utf8))
+        acknowledgement.received(restored)
+        check(!acknowledgement.mayHaveApplied, "Only verified empty success clears pending restoration")
+        acknowledgement.received(try SchedulingReply.decode(good))
+        check(acknowledgement.mayHaveApplied, "Applied acknowledgement remains recoverable on later disconnect")
         print("Scheduling selection: intent, foreground, power, freshness, pause, thermal, continuity and bounded protocol checks passed.")
     }
 }

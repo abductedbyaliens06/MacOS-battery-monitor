@@ -20,5 +20,10 @@ assert 'O_NOFOLLOW' in server and 'fsync(fd)' in server
 assert 'now-last>12' in server and 'now-begin>1800' in server
 project = (root / 'battery stuff.xcodeproj/project.pbxproj').read_text()
 assert 'ENABLE_USER_SCRIPT_SANDBOXING = NO' not in project
-assert 'BatteryOptimizerHelper' not in project, 'Privileged integration must await explicit approval'
-print('Proposed scheduling boundary: one policy setter, no hardware/memory/signal/command APIs; identity/peer checks, recovery and timeouts present. Privileged integration remains disabled.')
+assert 'com.apple.product-type.tool' in project and 'BatteryOptimizerHelper' in project
+assert 'PBXShellScriptBuildPhase' not in project, 'Helper must use native build/copy phases'
+verify = (helper / 'Verification.c').read_text()
+assert 'setgroups(0,NULL)' in verify and 'setuid(uid)' in verify
+assert 'task_for_pid(mach_task_self(),child' in verify
+assert 'BOVerifyCrossProcess((uid_t)uid)!=0' in server
+print('Approved scheduling boundary: one policy setter, no hardware/memory/signal/command APIs; identity/peer checks, recovery and timeouts present. Native packaging preserves script sandbox; disposable-worker gate precedes server startup.')

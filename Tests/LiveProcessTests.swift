@@ -32,11 +32,12 @@ import Foundation
         check(proposal(.unclassified).kind == .labelNeeded, "High CPU does not imply low importance")
         check(proposal(fresh: false).kind == .observing, "Stale data cannot produce an eligible proposal")
         family.foregroundRelated = true
-        check(proposal().kind == .protected, "Foreground dependencies are protected")
+        check(proposal(.normal).kind == .protected, "Normal foreground dependencies are protected")
+        check(proposal().kind == .candidate, "Explicitly flexible Python jobs are independent of the foreground editor")
         family.foregroundRelated = false; family.containsMonitor = true
         check(proposal().kind == .protected, "Monitor cannot target itself")
         family.containsMonitor = false; family.members[0].hasChildren = true
-        check(proposal().kind == .unsupported, "Launching parents are excluded")
+        check(proposal().kind == .candidate, "Non-inherited policy permits individually evaluated Python parents")
         family.members[0].hasChildren = false; family.members[0].isApplication = true
         check(proposal().kind == .unsupported, "GUI apps are excluded")
         let gap = analyzer.observe(frame(40), monitorPID: 999).families[0]

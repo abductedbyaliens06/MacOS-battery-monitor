@@ -40,7 +40,7 @@ nonisolated enum LiveProcessPolicy {
         guard fresh else { return hold(.observing, "Monitoring is paused, incomplete or stale. No proposal is eligible.") }
         if family.containsMonitor { return hold(.protected, "Battery Monitor is always excluded from its own optimizer.") }
         if importance == .urgent { return hold(.protected, "You are waiting for results. Preserve this family's progress.") }
-        if family.foregroundRelated { return hold(.protected, "This family belongs to the foreground app. Protect its work and dependencies.") }
+        if family.foregroundRelated && importance != .flexible { return hold(.protected, "This family belongs to the foreground app. Protect its work and dependencies.") }
         guard importance == .flexible else {
             return hold(importance == .unclassified ? .labelNeeded : .protected,
                         importance == .unclassified ? "Importance unknown. Classify it before considering changes." : "Normal importance: observe without changes.")
@@ -48,11 +48,11 @@ nonisolated enum LiveProcessPolicy {
         guard family.busySamples >= 3, let cpu = family.cpuPercent, cpu >= 10 else {
             return hold(.observing, "Collecting sustained CPU activity: at least three consecutive busy samples are needed.")
         }
-        guard let worker = family.members.filter({ $0.isPython && !$0.hasChildren && !$0.isApplication && ($0.cpuPercent ?? 0) >= 10 })
+        guard let worker = family.members.filter({ $0.isPython && !$0.isApplication && ($0.cpuPercent ?? 0) >= 10 })
             .max(by: { ($0.cpuPercent ?? 0) < ($1.cpuPercent ?? 0) }) else {
-            return hold(.unsupported, "Preview only. This first experiment considers Python leaf workers, not GUI apps or process-launching parents.")
+            return hold(.unsupported, "This mechanism supports Python workers, not GUI applications.")
         }
-        return .init(kind: .candidate, reason: "Would consider a lower scheduling tier for a flexible background worker. Read-back and rollback must be verified before any live change.", targetIdentity: worker.id)
+        return .init(kind: .candidate, reason: "Eligible for efficient scheduling when the verified administrator helper is connected and optimization is enabled on battery.", targetIdentity: worker.id)
     }
 }
 

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class OptimizerService: ObservableObject {
+    let liveControl = SchedulingControlService()
     @Published private(set) var enabled = false
     @Published private(set) var context = OptimizerContext()
     @Published private(set) var records: [ManagedJobRecord] = []
@@ -30,6 +31,7 @@ final class OptimizerService: ObservableObject {
     private var executions: [UUID: ManagedPythonExecution] = [:]
     private var starts: [UUID: Double] = [:]
     private var task: Task<Void, Never>?
+    private var studyChanges: AnyCancellable?
     private var observers: [NSObjectProtocol] = []
     private var sleeping = false
     private var powerWindow = OptimizerPowerWindow()
@@ -62,12 +64,20 @@ final class OptimizerService: ObservableObject {
             }
         }
         guard startAutomatically else { return }
+        if let study {
+            studyChanges = study.$recording.combineLatest(study.$labels).dropFirst().sink { [weak self] _, _ in
+                Task { @MainActor [weak self] in self?.tick() }
+            }
+        }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.sleeping = true; self?.tick() }
         })
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.sleeping = false; self?.tick() }
+        })
+        observers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         })
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -93,6 +103,8 @@ final class OptimizerService: ObservableObject {
             pause()
         } catch { message = error.localizedDescription }
     }
+    func setLiveOptimization(_ enabled: Bool) { liveControl.setEnabled(enabled); tick() }
+    func refreshLiveControl() { tick() }
     func startQueue() { enabled = true; message = nil; tick() }
     func pause() { enabled = false; updateQueuedReasons() }
     func remove(_ id: UUID) {
@@ -110,7 +122,7 @@ final class OptimizerService: ObservableObject {
         records.removeAll { $0.state != .running && $0.state != .queued }
         completedOutput = [:]; auditWritable = true; saveAudit()
     }
-    func prepareForQuit() { pause(); saveAudit() }
+    func prepareForQuit() { liveControl.stop(); pause(); saveAudit() }
 
     func checkPolicySupport(familyID: String) {
         guard let study, let live = study.live else { return }
@@ -193,6 +205,8 @@ final class OptimizerService: ObservableObject {
             }
             if advice.count >= 5 { break }
         }
+        liveControl.update(live: study.live, labels: study.labels, recording: study.recording, context: next,
+                           foregroundKey: NSWorkspace.shared.frontmostApplication?.bundleIdentifier.map { "app:\($0)" } ?? "unknown")
         evaluate(next, advice: advice)
     }
     func evaluate(_ next: OptimizerContext, advice: [String] = []) {

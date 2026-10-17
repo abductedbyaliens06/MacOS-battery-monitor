@@ -8,7 +8,9 @@ nonisolated final class SchedulingControlClient: @unchecked Sendable {
     private var fd: Int32 = -1
     private let lock = NSLock()
     private var generation = 0
-    var socketPath: String { "/var/run/battery-optimizer-\(getuid())-\(getpid()).sock" }
+    private let testPath: String?
+    init(testPath: String? = nil) { self.testPath = testPath }
+    var socketPath: String { testPath ?? "/var/run/battery-optimizer-\(getuid())-\(getpid()).sock" }
     func exchange(_ targets: [SchedulingTarget], completion: @escaping @Sendable (Result<SchedulingReply, Error>) -> Void) {
         lock.lock(); generation += 1; let token = generation; lock.unlock()
         queue.async { [self] in
@@ -21,7 +23,7 @@ nonisolated final class SchedulingControlClient: @unchecked Sendable {
     func close() { queue.async { [self] in disconnect() } }
     private func disconnect() { if fd >= 0 { Darwin.close(fd); fd = -1 } }
     private func send(_ targets: [SchedulingTarget]) throws -> SchedulingReply {
-        guard targets.count <= 16 else { throw CocoaError(.validationMissingMandatoryProperty) }
+        guard targets.count <= 16 else { throw POSIXError(.EINVAL) }
         if fd < 0 {
             fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
             guard fd >= 0 else { throw POSIXError(.ENOTCONN) }

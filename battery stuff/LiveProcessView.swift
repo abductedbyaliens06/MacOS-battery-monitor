@@ -5,11 +5,8 @@ struct LiveProcessView: View {
     @ObservedObject var optimizer: OptimizerService
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Surface("Live control · unavailable in this release") {
-                Text("Existing processes are discovered automatically. No jobs need to be added for analysis.")
-                Text("The tested macOS permissions do not allow exact scheduling-policy read-back for safe restoration. This release applies no scheduling changes, even to candidates.").foregroundStyle(.secondary)
-                Text("High CPU usage alone does not mean a task is unimportant or wasting power. Mark flexible work as Can finish later; keep tasks you need now as Waiting for results.").foregroundStyle(.secondary)
-            }.font(.system(size: 11))
+            Text("High CPU alone does not mean wasted power. Mark independent background Python work as Can finish later; use Waiting for results when you need its full progress.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             if let live = study.live {
                 let age = Date().timeIntervalSince(live.date)
                 let fresh = study.recording && age >= 0 && age <= 15 && !live.discoveryLimited
@@ -49,13 +46,7 @@ struct LiveProcessView: View {
                             }
                             if family.totalMembers > family.members.count { Text("Showing the 16 busiest members.").font(.system(size: 10)) }
                         }.font(.system(size: 10))
-                        if proposal.kind == .candidate {
-                            Button(optimizer.checkingPolicies.contains(family.id) ? "Checking…" : "Check OS support · read only") {
-                                optimizer.checkPolicySupport(familyID: family.id)
-                            }.font(.system(size: 11)).buttonStyle(.bordered)
-                                .disabled(optimizer.checkingPolicies.contains(family.id))
-                            if let result = optimizer.policyChecks[family.id] { Text(result).font(.system(size: 10)).foregroundStyle(.secondary) }
-                        }
+
                     }
                 }
             } else {

@@ -20,3 +20,9 @@ python3 Tests/SchedulingBenchmarkTests.py
 clang -O2 -Wall -Wextra -Werror OptimizerHelper/SchedulingLease.c \
   Tools/SchedulingBenchmark/Fixture.c -o "$check_dir/benchmark-fixture"
 python3 Tests/SchedulingBenchmarkFixtureCheck.py "$check_dir/benchmark-fixture"
+
+swiftc -module-cache-path /tmp/battery-swift-cache \
+  'battery stuff/UsageStudyModels.swift' 'battery stuff/LiveProcessPreview.swift' \
+  'battery stuff/OptimizerPolicy.swift' 'battery stuff/SchedulingControlPolicy.swift' \
+  'battery stuff/SchedulingControlClient.swift' Tests/SchedulingPeerCheck.swift -o "$check_dir/peer"
+"$check_dir/peer"
