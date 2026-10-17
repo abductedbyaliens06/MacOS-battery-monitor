@@ -16,3 +16,7 @@ swiftc -module-cache-path /tmp/battery-swift-cache \
   Tests/SchedulingControlPolicyTests.swift -o "$check_dir/selection"
 "$check_dir/selection"
 python3 Tests/SchedulingBoundaryAudit.py
+python3 Tests/SchedulingBenchmarkTests.py
+clang -O2 -Wall -Wextra -Werror OptimizerHelper/SchedulingLease.c \
+  Tools/SchedulingBenchmark/Fixture.c -o "$check_dir/benchmark-fixture"
+python3 Tests/SchedulingBenchmarkFixtureCheck.py "$check_dir/benchmark-fixture"

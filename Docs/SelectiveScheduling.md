@@ -48,3 +48,9 @@ Following approval, the necessary gates are:
 5. Require foreground task performance at least 90% of baseline, report total energy per completed work and background delay, and disable an intervention that regresses those measures. The 8 W/14 W and 30–40% runtime objectives remain unproven. Broad browsing/video savings comparable to system LPM may require additional cooperative app-specific controls; slowing Python work alone does not establish that objective.
 
 Do not claim the full optimizer is complete based on successful policy changes or lower CPU usage alone.
+
+## Unprivileged measurement harness
+
+The [counterbalanced pilot](../Tools/SchedulingBenchmark/README.md) is now available independently of administrator integration. It exercises the actual scheduling policy on a disposable workload that changes only its **own** task policy. A separate synthetic foreground probe and read-only SMC collector measure throughput, latency and battery energy. It never controls discovered user processes, uses the administrator helper or changes display/LPM settings.
+
+The native fixture protocol, active-policy EOF restoration and nine analysis checks pass. The AC-power preflight was run on the current machine: it produced an inconclusive report with zero trials and launched no workload fixtures. Thus there is still no evidence of battery savings. The harness can gather that next on battery, without substituting synthetic probe performance for real application validation. No administrator authorization has been received, and privileged integration remains inactive.
