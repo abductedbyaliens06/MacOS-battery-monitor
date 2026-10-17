@@ -15,3 +15,11 @@ swiftc -module-cache-path /tmp/battery-swift-cache \
 swiftc -module-cache-path /tmp/battery-swift-cache \
   'battery stuff/BatterySessions.swift' 'battery stuff/BatteryHistory.swift' Tests/BatteryHistoryTests.swift -o "$check_dir/history"
 "$check_dir/history"
+swiftc -module-cache-path /tmp/battery-swift-cache \
+  'battery stuff/BatterySnapshot.swift' 'battery stuff/BatteryPreferences.swift' \
+  'battery stuff/PowerMenuBarLabel.swift' 'battery stuff/BatteryStatusButtonRenderer.swift' \
+  Tests/BatteryStatusRenderingTests.swift -o "$check_dir/status-rendering"
+python3 - "$check_dir/status-rendering" <<'PY'
+import subprocess, sys
+subprocess.run([sys.argv[1]], check=True, timeout=20)
+PY

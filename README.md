@@ -100,13 +100,17 @@ Run all local regression checks from the repository directory:
 ./scripts/check.sh
 ```
 
-These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, and write ordering. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
+These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, write ordering, and status-icon rendering under repeated appearance notifications. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
 
 ## Project structure
 
 ```text
 battery stuff/
-├── BatteryMonitorApp.swift       # App entry point and colored menu bar label
+├── BatteryMonitorApp.swift       # App entry point and lifecycle
+├── BatteryStatusController.swift # Native status button; dashboard exists only while open
+├── BatteryStatusButtonRenderer.swift # Deduplicated status button updates
+├── PowerMenuBarLabel.swift       # Eager bitmap wattage rendering
+├── BatterySnapshot.swift         # Telemetry models
 ├── BatteryService.swift          # Monitoring, telemetry, history, and alerts
 ├── BatteryPreferences.swift     # Saved menu bar and alert preferences
 ├── BatterySessions.swift        # Observed sessions and measured energy
