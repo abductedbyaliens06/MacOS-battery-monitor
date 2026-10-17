@@ -10,6 +10,9 @@ final class OptimizerService: ObservableObject {
     @Published private(set) var records: [ManagedJobRecord] = []
     @Published private(set) var message: String?
     @Published private(set) var preview: [String] = []
+    @Published var managedQueueExpanded = false
+    @Published private(set) var policyChecks: [String: String] = [:]
+    @Published private(set) var checkingPolicies: Set<String> = []
     @Published var limit = 1
     @Published var showDraft = false
     @Published var draftLabel = ""
@@ -108,6 +111,27 @@ final class OptimizerService: ObservableObject {
         completedOutput = [:]; auditWritable = true; saveAudit()
     }
     func prepareForQuit() { pause(); saveAudit() }
+
+    func checkPolicySupport(familyID: String) {
+        guard let study, let live = study.live else { return }
+        let age = Date().timeIntervalSince(live.date)
+        guard let family = live.families.first(where: { $0.id == familyID }) else { return }
+        let proposal = LiveProcessPolicy.proposal(family, importance: study.labels[family.id] ?? .unclassified,
+                                                  fresh: study.recording && age >= 0 && age <= 15 && !live.discoveryLimited)
+        guard proposal.kind == .candidate, let identity = proposal.targetIdentity,
+              let target = family.members.first(where: { $0.id == identity }), !checkingPolicies.contains(familyID) else { return }
+        checkingPolicies.insert(familyID)
+        let process = target.process
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let message = ProcessPolicyReadback.check(process)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.checkingPolicies.remove(familyID)
+                if self.policyChecks.count >= 100 { self.policyChecks = [:] }
+                self.policyChecks[familyID] = message
+            }
+        }
+    }
 
     func chooseInterpreter() { choose(kind: 0) }
     func chooseScript() { choose(kind: 1) }

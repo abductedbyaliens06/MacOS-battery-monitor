@@ -12,6 +12,7 @@ nonisolated struct StudyWorkerResult: Sendable {
     var monitorFootprint: UInt64?
     var truncated: Bool
     var discoveryLimited: Bool
+    var live: LiveProcessSnapshot
 }
 
 /// A single utility queue owns the database, process baselines and incremental writes.
@@ -20,6 +21,7 @@ nonisolated final class UsageStudyWorker: @unchecked Sendable {
     private let url: URL
     private var store: UsageStudyStore?
     private var accumulator = StudyAccumulator()
+    private var liveAnalyzer = LiveProcessAnalyzer()
     private var lastSave = Date.distantPast
     private var previousSelf: (uptime: Double, cpu: UInt64)?
     init(url: URL) { self.url = url }
@@ -32,7 +34,7 @@ nonisolated final class UsageStudyWorker: @unchecked Sendable {
         try database().save(accumulator.pending, now: Date())
         accumulator.didSave(); lastSave = Date()
     }
-    func boundary() throws { accumulator.breakContinuity(); previousSelf = nil; try flush() }
+    func boundary() throws { accumulator.breakContinuity(); liveAnalyzer.reset(); previousSelf = nil; try flush() }
     func clear() throws {
         if let store { try store.clear() }
         else {
@@ -40,7 +42,7 @@ nonisolated final class UsageStudyWorker: @unchecked Sendable {
             try UsageStudyStore.erase(at: url)
             _ = try database()
         }
-        accumulator.reset(); previousSelf = nil
+        accumulator.reset(); liveAnalyzer.reset(); previousSelf = nil
     }
     func report(hours: Double, labels: [String: StudyImportance]) throws -> StudyReport {
         try flush()
@@ -58,6 +60,7 @@ nonisolated final class UsageStudyWorker: @unchecked Sendable {
         let frame = StudyFrame(date: now, uptime: uptime, context: context, batteryDraw: battery,
                                batterySource: source, temperature: temperature, processes: scan.processes,
                                apps: apps, attempted: scan.attempted, denied: scan.denied, scanMS: scanMS, discoveryLimited: scan.discoveryLimited)
+        let live = liveAnalyzer.observe(frame, monitorPID: getpid())
         accumulator.record(frame, labels: labels)
         if now.timeIntervalSince(lastSave) >= 60 { try flush() }
         let own = scan.processes.first { $0.pid == getpid() }
@@ -68,7 +71,7 @@ nonisolated final class UsageStudyWorker: @unchecked Sendable {
         if let own { previousSelf = (uptime, own.cpuNS) }
         return StudyWorkerResult(report: try reportHours.map { try report(hours: $0, labels: labels) }, scanMS: scanMS,
                                  readable: scan.processes.count, denied: scan.denied, monitorCPU: cpu,
-                                 monitorFootprint: own?.footprint, truncated: scan.truncated, discoveryLimited: scan.discoveryLimited)
+                                 monitorFootprint: own?.footprint, truncated: scan.truncated, discoveryLimited: scan.discoveryLimited, live: live)
     }
 }
 
@@ -84,6 +87,7 @@ final class UsageStudyService: ObservableObject {
     @Published private(set) var monitorFootprint: UInt64?
     @Published private(set) var truncated = false
     @Published private(set) var discoveryLimited = false
+    @Published private(set) var live: LiveProcessSnapshot?
     @Published private(set) var lastSample: Date?
     @Published private(set) var labels: [String: StudyImportance]
     @Published var workload: StudyWorkload { didSet { defaults.set(workload.rawValue, forKey: "study.workload.v1") } }
@@ -100,7 +104,7 @@ final class UsageStudyService: ObservableObject {
     private var generation = UUID()
 
     init(battery: BatteryService?, defaults: UserDefaults = .standard, url: URL? = nil,
-         startAutomatically: Bool = true, initialReport: StudyReport? = nil) {
+         startAutomatically: Bool = true, initialReport: StudyReport? = nil, initialLive: LiveProcessSnapshot? = nil) {
         self.battery = battery; self.defaults = defaults
         recording = defaults.object(forKey: "study.recording.v1") as? Bool ?? true
         workload = StudyWorkload(rawValue: defaults.string(forKey: "study.workload.v1") ?? "") ?? .unclassified
@@ -110,6 +114,7 @@ final class UsageStudyService: ObservableObject {
         let directory = BatteryDataLocations.directory
         worker = UsageStudyWorker(url: url ?? directory.appendingPathComponent("usage-study-v1.sqlite"))
         if let initialReport { report = initialReport }
+        live = initialLive
         guard startAutomatically else { return }
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -136,6 +141,7 @@ final class UsageStudyService: ObservableObject {
         for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
     }
     func setRecording(_ enabled: Bool) {
+        if !enabled { live = nil }
         recording = enabled; defaults.set(enabled, forKey: "study.recording.v1")
         generation = UUID(); flushBoundary()
         if !enabled { message = nil }
@@ -168,6 +174,7 @@ final class UsageStudyService: ObservableObject {
     func terminate() { worker.queue.sync { try? worker.boundary() } }
     func clear() {
         generation = UUID()
+        live = nil
         worker.queue.async { [worker, weak self] in
             do {
                 try worker.clear()
@@ -231,6 +238,7 @@ final class UsageStudyService: ObservableObject {
         case .success(let result):
             readableProcesses = result.readable; unavailableProcesses = result.denied
             scanMS = result.scanMS; monitorCPU = result.monitorCPU; monitorFootprint = result.monitorFootprint
+            live = result.live
             truncated = result.truncated; discoveryLimited = result.discoveryLimited; lastSample = Date()
             if let report = result.report { self.report = report; lastReport = Date() }
         case .failure:

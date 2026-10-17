@@ -1,6 +1,18 @@
-# Battery optimizer prototype · v1
+# Battery optimizer prototype · v1.3.1
 
-Open **Optimize** in the menu bar. The prototype begins in preview mode with its managed queue paused every time the app starts. The usage study continues independently. Study recommendations never change existing applications or processes.
+Open **Optimize** in the menu bar. Current running processes are discovered automatically from the existing five-second usage-study scan. No jobs need to be added for analysis. The optional managed queue is collapsed and paused at startup.
+
+## Automatic running-process preview
+
+The view ranks up to 20 current process families by measured CPU deltas (100% is one core), with up to 16 members per family. It never reports CPU as per-process watts. First samples, PID reuse, counter resets and gaps do not produce fabricated rates. Live frames remain in memory; the existing bounded study archive is unchanged.
+
+Importance comes from your explicit labels, shared with Study. Foreground app descendants, urgent work and the monitor itself are protected. Normal and unclassified work receive no adjustment proposal. The first preview considers only flexible Python leaf workers after three consecutive busy intervals (family CPU at least 10%); GUI apps and process-launching parents are excluded. Foreground ancestry is checked even when Python grouping separates a job from its terminal. Missing process coverage is displayed, and paused/stale/restricted discovery cannot produce eligible proposals.
+
+**Live enforcement is unavailable in this release.** A candidate's **Check OS support · read only** validates current-user ownership and PID start identity, obtains a task-name port, attempts exact QoS policy read-back, and releases the port. It does not request a debugger/control port or apply a policy. On the tested Mac, exact read-back returns KERN_INVALID_ARGUMENT (4). A candidate is only a proposal, not an applied optimization.
+
+Bounded experiments on owned temporary children found that Darwin background scheduling flags can be set and cleared, but children can inherit them. Blindly clearing a parent is not a reliable restoration strategy. The alternative task-policy route could not read its original policy with available public permissions. Consequently this app ships neither setter. Even successful read-back leaves live control disabled in this preview. No performance or battery improvement is claimed.
+
+The optional managed queue remains available for separately added scripts; it does not adopt or control the processes in the automatic view.
 
 ## Scope and safety boundary
 

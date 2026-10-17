@@ -18,7 +18,7 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 ## Features
 
 - **Live battery power:** signed wattage, sampled approximately once per second when supported SMC sensors are available.
-- **Optimizer prototype:** preview recommendations and an explicitly started Python job queue; no hardware controls or changes to existing apps. See [prototype behavior and limits](Docs/OptimizerPrototype.md).
+- **Optimizer prototype:** automatically ranks running process families, shares importance labels with Study, protects foreground work, and offers a read-only OS capability check. Live throttling remains disabled because safe policy restoration cannot be verified with current permissions. An optional explicit Python job queue is also available; no hardware controls. See [prototype behavior and limits](Docs/OptimizerPrototype.md).
 - **Usage study:** read-only process-family CPU, memory and I/O summaries, active/away context, explicit importance labels, collector health, and local JSON export. The standalone build reads current-user process counters; restricted/exited processes and historical coverage gaps are reported explicitly. See [the study protocol](Docs/UsageStudyProtocol.md) for access and attribution limits.
 - **Saved preferences:** menu bar appearance, alerts, glow, and thresholds survive app restarts.
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.

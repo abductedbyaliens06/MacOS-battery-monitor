@@ -95,7 +95,21 @@ import SwiftUI
 
         let suite = "Optimizer.UI.\(UUID().uuidString)"; let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let study = UsageStudyService(battery: nil, defaults: defaults, url: directory.appendingPathComponent("study.sqlite"), startAutomatically: false)
+        let context = StudyContext(activity: .active, foregroundKey: "editor", foregroundName: "Editor", workload: .coding, onBattery: true, lowPowerMode: false, thermal: 0, displayCount: 1, refreshRates: [120])
+        let worker = StudyProcess(pid: 34567, parent: 1, started: 1, name: "python3", cpuNS: 0, backgroundNS: 0, footprint: 100, readBytes: 0, writeBytes: 0)
+        let family = LiveProcessFamily(id: "fixture", name: "Python test workers", cpuPercent: 180, busySamples: 4, foregroundRelated: false, containsMonitor: false, members: [.init(process: worker, cpuPercent: 180, hasChildren: false, isApplication: false)], totalMembers: 1)
+        let live = LiveProcessSnapshot(date: Date(), context: context, families: [family], readable: 1, unavailable: 0, discoveryLimited: false)
+        let study = UsageStudyService(battery: nil, defaults: defaults, url: directory.appendingPathComponent("study.sqlite"), startAutomatically: false, initialLive: live)
+        study.setImportance(.flexible, for: "fixture")
+        let owned = Process(); owned.executableURL = URL(fileURLWithPath: "/bin/sleep"); owned.arguments = ["2"]
+        try owned.run()
+        guard let ownSample = UsageProcessCollector.scan().processes.first(where: { $0.pid == owned.processIdentifier }) else { fatalError("Owned fixture must be readable") }
+        let result = ProcessPolicyReadback.check(ownSample)
+        check(result.contains("No changes made") || result.contains("nothing was changed"), "Capability check never enables a setter")
+        var wrongIdentity = ownSample; wrongIdentity.started += 1
+        check(ProcessPolicyReadback.check(wrongIdentity).contains("changed identity"), "Start identity is validated before task access")
+        owned.waitUntilExit()
+        print("Read-only policy check on owned temporary child: \(result)")
         optimizer.evaluate(adapter, advice: ["Editor: foreground work is protected; no changes applied."])
         for scheme in [ColorScheme.light, .dark] {
             let content = OptimizerView(optimizer: optimizer, study: study).padding(20)
