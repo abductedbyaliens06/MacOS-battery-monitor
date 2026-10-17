@@ -8,6 +8,7 @@ final class BatteryStatusController: NSObject, NSPopoverDelegate {
     private let service: BatteryService
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
+    private var buttonRenderer: BatteryStatusButtonRenderer?
     private var readings: AnyCancellable?
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -18,6 +19,7 @@ final class BatteryStatusController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
         popover.contentSize = NSSize(width: 440, height: 700)
+        buttonRenderer = statusItem.button.map { BatteryStatusButtonRenderer(button: $0) }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         readings = service.$snapshot.combineLatest(service.$labelStyle)
@@ -36,9 +38,7 @@ final class BatteryStatusController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let label = PowerMenuBarLabel(snapshot: snapshot, style: style, colorScheme: dark ? .dark : .light)
-        button.image = label.renderedLabel()
-        button.setAccessibilityLabel(label.accessibilityLabel)
-        button.toolTip = label.toolTip
+        buttonRenderer?.update(label, scale: button.window?.backingScaleFactor ?? 2)
     }
 
     @objc private func togglePopover() {
