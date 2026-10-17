@@ -26,6 +26,7 @@ enum PopoverTab: String, CaseIterable, Identifiable {
     case flow = "Power"
     case history = "History"
     case study = "Study"
+    case optimize = "Optimize"
     case health = "Battery"
     case bms = "Hardware"
     case alerts = "Settings"
@@ -37,6 +38,7 @@ enum PopoverTab: String, CaseIterable, Identifiable {
         case .flow: return "waveform.path"
         case .history: return "clock.arrow.circlepath"
         case .study: return "chart.bar.xaxis"
+        case .optimize: return "leaf"
         case .health: return "heart"
         case .bms: return "cpu"
         case .alerts: return "slider.horizontal.3"
@@ -48,7 +50,8 @@ enum PopoverTab: String, CaseIterable, Identifiable {
 struct JuicyMenuView: View {
     @ObservedObject var service: BatteryService
     let study: UsageStudyService
-    @State private var selectedTab: PopoverTab = .flow
+    let optimizer: OptimizerService
+    @AppStorage("ui.selected-tab") private var selectedTab: PopoverTab = .flow
     @State private var rawSearch = ""
 
     var body: some View {
@@ -80,7 +83,7 @@ struct JuicyMenuView: View {
             .padding(.bottom, 16)
 
             HStack(spacing: 4) {
-                ForEach([PopoverTab.flow, .history, .study, .health, .bms]) { tab in
+                ForEach([PopoverTab.flow, .history, .study, .optimize, .health]) { tab in
                     Button { selectedTab = tab } label: {
                         Label(tab.rawValue, systemImage: tab.symbol)
                             .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .medium))
@@ -112,6 +115,7 @@ struct JuicyMenuView: View {
                         case .flow: PopoverFlowTab(service: service)
                         case .history: BatteryHistoryView(service: service)
                         case .study: UsageStudyView(study: study)
+                        case .optimize: OptimizerView(optimizer: optimizer, study: study)
                         case .health: PopoverHealthTab(s: service.snapshot)
                         case .bms:
                             PopoverBMSTab(s: service.snapshot)
@@ -153,6 +157,7 @@ struct JuicyMenuView: View {
                 .accessibilityLabel("Refresh battery data")
                 .help("Refresh now")
                 Menu {
+                    Button("Hardware details") { selectedTab = .bms }
                     Button("Raw data inspector") { selectedTab = .raw }
                     Button("Quit Battery Monitor") { NSApplication.shared.terminate(nil) }
                 } label: {

@@ -7,17 +7,20 @@ import SwiftUI
 final class BatteryStatusController: NSObject, NSPopoverDelegate {
     private let service: BatteryService
     private let study: UsageStudyService
+    private let optimizer: OptimizerService
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var buttonRenderer: BatteryStatusButtonRenderer?
     private var readings: AnyCancellable?
     private var appearanceObservation: NSKeyValueObservation?
 
-    init(service: BatteryService, study: UsageStudyService) {
+    init(service: BatteryService, study: UsageStudyService, optimizer: OptimizerService) {
         self.service = service
         self.study = study
+        self.optimizer = optimizer
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        optimizer.requestPopover = { [weak self] in self?.showPopover() }
         popover.behavior = .transient
         popover.delegate = self
         popover.contentSize = NSSize(width: 440, height: 700)
@@ -44,12 +47,12 @@ final class BatteryStatusController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func togglePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
-        } else if let button = statusItem.button {
-            popover.contentViewController = NSHostingController(rootView: JuicyMenuView(service: service, study: study))
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
+        if popover.isShown { popover.performClose(nil) } else { showPopover() }
+    }
+    private func showPopover() {
+        guard !popover.isShown, let button = statusItem.button else { return }
+        popover.contentViewController = NSHostingController(rootView: JuicyMenuView(service: service, study: study, optimizer: optimizer))
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     func popoverDidClose(_ notification: Notification) {

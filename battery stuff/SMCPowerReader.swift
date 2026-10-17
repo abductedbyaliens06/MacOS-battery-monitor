@@ -3,6 +3,7 @@ import IOKit
 
 /// Read-only SMC sensor access. Never sends the write-key command.
 final class SMCPowerReader {
+    private enum ReadCommand: UInt8 { case keyInfo = 9, bytes = 5 }
     private var connection: io_connect_t = 0
     private var keyInfo: [String: (size: UInt32, type: UInt32)] = [:]
 
@@ -52,12 +53,12 @@ final class SMCPowerReader {
         if let cached = keyInfo[key] {
             info = cached
         } else {
-            guard let response = call(key: code, command: 9), response[40] == 0 else { return nil }
+            guard let response = call(key: code, command: .keyInfo), response[40] == 0 else { return nil }
             info = (readUInt32(response, at: 28), readUInt32(response, at: 32))
             guard (1...32).contains(info.size) else { return nil }
             keyInfo[key] = info
         }
-        guard let response = call(key: code, command: 5, size: info.size), response[40] == 0 else { return nil }
+        guard let response = call(key: code, command: .bytes, size: info.size), response[40] == 0 else { return nil }
         let bytes = Array(response[48..<48 + Int(info.size)])
         guard let value = Self.decode(bytes: bytes, type: info.type) else { return nil }
         // Integer battery sensors are mV/mA; floating-point variants are V/A.
@@ -68,12 +69,12 @@ final class SMCPowerReader {
     }
 
     // SMCKeyData's ABI is 80 bytes: keyInfo at 28, command at 42, payload at 48.
-    private func call(key: UInt32, command: UInt8, size: UInt32 = 0) -> [UInt8]? {
+    private func call(key: UInt32, command: ReadCommand, size: UInt32 = 0) -> [UInt8]? {
         var input = [UInt8](repeating: 0, count: 80)
         var output = [UInt8](repeating: 0, count: 80)
         withUnsafeBytes(of: key) { input.replaceSubrange(0..<4, with: $0) }
         withUnsafeBytes(of: size) { input.replaceSubrange(28..<32, with: $0) }
-        input[42] = command
+        input[42] = command.rawValue
         var outputSize = 80
         let result = input.withUnsafeBytes { inputBuffer in
             output.withUnsafeMutableBytes { outputBuffer in

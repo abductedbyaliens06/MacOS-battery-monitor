@@ -30,3 +30,7 @@ swiftc -module-cache-path /tmp/battery-swift-cache \
 swiftc -module-cache-path /tmp/battery-swift-cache \
   'battery stuff/BatteryDataLocations.swift' Tests/BatteryDataLocationsTests.swift -o "$check_dir/data-locations"
 "$check_dir/data-locations"
+swiftc -module-cache-path /tmp/battery-swift-cache \
+  'battery stuff/OptimizerPolicy.swift' Tests/OptimizerPolicyTests.swift -o "$check_dir/optimizer-policy"
+"$check_dir/optimizer-policy"
+python3 Tests/OptimizerSafetyAudit.py

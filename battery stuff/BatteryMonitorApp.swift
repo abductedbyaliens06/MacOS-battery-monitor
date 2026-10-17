@@ -12,6 +12,7 @@ struct BatteryMonitorApp: App {
 
 @MainActor
 final class BatteryAppDelegate: NSObject, NSApplicationDelegate {
+    private var optimizer: OptimizerService?
     private var study: UsageStudyService?
     private var statusController: BatteryStatusController?
 
@@ -21,7 +22,19 @@ final class BatteryAppDelegate: NSObject, NSApplicationDelegate {
         let battery = BatteryService()
         let study = UsageStudyService(battery: battery)
         self.study = study
-        statusController = BatteryStatusController(service: battery, study: study)
+        let optimizer = OptimizerService(battery: battery, study: study)
+        self.optimizer = optimizer
+        statusController = BatteryStatusController(service: battery, study: study, optimizer: optimizer)
     }
-    func applicationWillTerminate(_ notification: Notification) { study?.terminate() }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let optimizer, optimizer.runningCount > 0 else { return .terminateNow }
+        optimizer.pause()
+        let alert = NSAlert()
+        alert.messageText = "Managed scripts are still running"
+        alert.informativeText = "New launches are paused. Let these scripts finish before quitting so their output streams remain connected. The optimizer will not stop or freeze them."
+        alert.addButton(withTitle: "Keep app running")
+        alert.runModal()
+        return .terminateCancel
+    }
+    func applicationWillTerminate(_ notification: Notification) { optimizer?.prepareForQuit(); study?.terminate() }
 }

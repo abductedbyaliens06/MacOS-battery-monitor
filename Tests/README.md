@@ -4,7 +4,7 @@ Run all regression checks from the project directory:
 ./scripts/check.sh
 ```
 
-The seven executable suites cover:
+The eight executable suites and safety-boundary audit cover:
 
 - Telemetry: unsigned signed-current decoding, delayed charging samples after unplugging, missing/invalid telemetry, temperature units and SMC payload decoding.
 - Preferences: persistence across store instances, safe defaults for corrupt data, and threshold bounds. Tests use a disposable UserDefaults suite.
@@ -15,6 +15,8 @@ The seven executable suites cover:
 - Usage study: counter integration, missing power, context/gap/clock boundaries, PID reuse, Python/app grouping, explicit importance, incremental SQLite writes, restart, seven-day retention, clear, streaming export and corrupt-store preservation. All files are temporary.
 
 - Data locations: reuse of container history and SQLite/WAL files, migration of known preferences, preservation of opt-outs and newer settings, and fresh-install paths. Fixtures use temporary directories and defaults.
+
+- Optimizer policy: preview/freshness gates, active/away behavior, concurrency limits, urgent ordering, thermal holds, cooldown, invalid context, and time-weighted sustained-power continuity. The source audit rejects hardware/power/signal APIs in optimizer components and requires read-only SMC commands.
 
 Tests do not change charging state or write SMC keys. Validate physical plug/unplug and sleep/wake behavior with the app running. Model-dependent SMC access must also be checked in the signed app. Command-line access may be restricted.
 
@@ -33,3 +35,11 @@ Run the standalone collector integration check with temporary, low-duty Python w
 ```
 
 It verifies current-user discovery, advancing CPU counters, and grouping of an owned Python parent and two workers. Workers exit after twenty seconds; the test process is bounded to thirty seconds and changes no existing processes or priorities.
+
+Run the optimizer service/executor check with temporary Python fixtures:
+
+```sh
+./scripts/check-optimizer.sh
+```
+
+This opens no windows and touches no existing jobs. It checks actual managed launches, concurrency, pause/failure behavior, shell-expansion prevention, bounded/drained output, audit privacy and corrupt-log recovery, and no automatic restart. The execution phase is bounded to thirty seconds. Offscreen light/dark previews are in `/tmp/battery-optimizer-preview/`. See [prototype limits](../Docs/OptimizerPrototype.md).
