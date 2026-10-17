@@ -6,14 +6,16 @@ import SwiftUI
 @MainActor
 final class BatteryStatusController: NSObject, NSPopoverDelegate {
     private let service: BatteryService
+    private let study: UsageStudyService
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private var buttonRenderer: BatteryStatusButtonRenderer?
     private var readings: AnyCancellable?
     private var appearanceObservation: NSKeyValueObservation?
 
-    init(service: BatteryService) {
+    init(service: BatteryService, study: UsageStudyService) {
         self.service = service
+        self.study = study
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         popover.behavior = .transient
@@ -45,13 +47,14 @@ final class BatteryStatusController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else if let button = statusItem.button {
-            popover.contentViewController = NSHostingController(rootView: JuicyMenuView(service: service))
+            popover.contentViewController = NSHostingController(rootView: JuicyMenuView(service: service, study: study))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
 
     func popoverDidClose(_ notification: Notification) {
         // A hidden hosting controller would keep processing every telemetry update.
+        study.setVisible(false)
         popover.contentViewController = nil
     }
 }

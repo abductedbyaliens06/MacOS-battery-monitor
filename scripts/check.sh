@@ -23,3 +23,7 @@ python3 - "$check_dir/status-rendering" <<'PY'
 import subprocess, sys
 subprocess.run([sys.argv[1]], check=True, timeout=20)
 PY
+swiftc -module-cache-path /tmp/battery-swift-cache \
+  'battery stuff/UsageStudyModels.swift' 'battery stuff/UsageStudyStore.swift' \
+  Tests/UsageStudyTests.swift -o "$check_dir/usage-study"
+"$check_dir/usage-study"

@@ -18,6 +18,7 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 ## Features
 
 - **Live battery power:** signed wattage, sampled approximately once per second when supported SMC sensors are available.
+- **Usage study:** read-only process-family CPU, memory and I/O summaries, active/away context, explicit importance labels, collector health, and local JSON export. The sandbox currently restricts other-app discovery on the tested Mac; the UI flags incomplete coverage. See [the study protocol](Docs/UsageStudyProtocol.md) for access and attribution limits.
 - **Saved preferences:** menu bar appearance, alerts, glow, and thresholds survive app restarts.
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.
 - **Local history:** seven days of minute averages for power, charge level, and battery temperature, with 1-hour, 24-hour, and 7-day views. Recent session summaries survive restarts.
@@ -100,7 +101,7 @@ Run all local regression checks from the repository directory:
 ./scripts/check.sh
 ```
 
-These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, write ordering, and status-icon rendering under repeated appearance notifications. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
+These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, write ordering, usage-study counters/grouping/storage/export, and status-icon rendering under repeated appearance notifications. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
 
 ## Project structure
 
@@ -129,7 +130,7 @@ battery stuff.xcodeproj/          # Xcode project
 
 This version is a monitoring tool. It does not automatically optimize other apps, limit charging, change CPU/GPU power settings, or guarantee longer battery life. Charge targets trigger alerts; they do not stop charging.
 
-Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. History and up to 50 recent battery session summaries are stored for seven days in the app’s Application Support directory. Battery readings stay local; the app contains no network requests or analytics.
+Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. The usage study stores up to seven days of bounded local summaries and reports restricted process access explicitly. History and up to 50 recent battery session summaries are stored for seven days in the app’s Application Support directory. Battery readings stay local; the app contains no network requests or analytics.
 
 ## Sessions and local history
 

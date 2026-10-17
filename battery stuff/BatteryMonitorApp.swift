@@ -12,10 +12,15 @@ struct BatteryMonitorApp: App {
 
 @MainActor
 final class BatteryAppDelegate: NSObject, NSApplicationDelegate {
+    private var study: UsageStudyService?
     private var statusController: BatteryStatusController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
-        statusController = BatteryStatusController(service: BatteryService())
+        let battery = BatteryService()
+        let study = UsageStudyService(battery: battery)
+        self.study = study
+        statusController = BatteryStatusController(service: battery, study: study)
     }
+    func applicationWillTerminate(_ notification: Notification) { study?.terminate() }
 }
