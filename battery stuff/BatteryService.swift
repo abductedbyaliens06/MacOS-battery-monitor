@@ -28,8 +28,7 @@ final class BatteryService: ObservableObject {
     @Published var lowBatteryThreshold: Double = 20.0 { didSet { savePreferences() } }
     @Published var highChargeLimitThreshold: Double = 80.0 { didSet { savePreferences() } }
     
-    private let archiveStore = BatteryArchiveStore(url: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("BatteryMonitor/history-v1.json"))
+    private let archiveStore = BatteryArchiveStore(url: BatteryDataLocations.directory.appendingPathComponent("history-v1.json"))
     private var archiveReady = true
     private var archiveGeneration = UUID()
     private var lastArchiveSave = Date.distantPast

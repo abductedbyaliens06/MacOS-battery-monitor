@@ -18,6 +18,8 @@ Screenshots use illustrative data. More previews are available in [Preview](Prev
 ## Features
 
 - **Live battery power:** signed wattage, sampled approximately once per second when supported SMC sensors are available.
+- **Optimizer prototype:** automatically ranks running process families, shares importance labels with Study, protects foreground work, and offers a read-only OS capability check. An optional temporary administrator helper can enable selective scheduling after a disposable-worker apply/restore test passes; it starts off and its power savings remain unverified. See [selective scheduling and limits](Docs/SelectiveScheduling.md). An optional explicit Python job queue is also available; no hardware controls. See [prototype behavior and limits](Docs/OptimizerPrototype.md).
+- **Usage study:** read-only process-family CPU, memory and I/O summaries, active/away context, explicit importance labels, collector health, and local JSON export. The standalone build reads current-user process counters; restricted/exited processes and historical coverage gaps are reported explicitly. See [the study protocol](Docs/UsageStudyProtocol.md) for access and attribution limits.
 - **Saved preferences:** menu bar appearance, alerts, glow, and thresholds survive app restarts.
 - **Menu bar display options:** battery watts, charger input, system load, battery percentage, and temperature.
 - **Local history:** seven days of minute averages for power, charge level, and battery temperature, with 1-hour, 24-hour, and 7-day views. Recent session summaries survive restarts.
@@ -90,7 +92,7 @@ To start automatically, add the app under **Open at Login** in System Settings' 
 
 Battery power is calculated from live voltage × current when SMC readings are available. Otherwise, the app falls back to registry telemetry, which can refresh much more slowly. The dashboard footer identifies the active source. Missing or inconsistent battery power readings display as `—` rather than being presented as a fresh measurement.
 
-The app remains sandboxed and includes an IOKit user-client exception for SMC access. Its SMC reader only reads sensors; it does not write hardware settings.
+The standalone app runs without App Sandbox to read current-user process counters. It requires no administrator helper. Its SMC reader only reads sensors; it does not write hardware settings.
 
 ## Regression checks
 
@@ -100,7 +102,7 @@ Run all local regression checks from the repository directory:
 ./scripts/check.sh
 ```
 
-These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, write ordering, and status-icon rendering under repeated appearance notifications. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
+These checks cover telemetry and temperature decoding, preference persistence, session integration, measurement gaps, history retention, archive corruption, write ordering, usage-study counters/grouping/storage/export, and status-icon rendering under repeated appearance notifications. Physical plug/unplug and sleep/wake behavior should also be checked with the app running.
 
 ## Project structure
 
@@ -129,7 +131,7 @@ battery stuff.xcodeproj/          # Xcode project
 
 This version is a monitoring tool. It does not automatically optimize other apps, limit charging, change CPU/GPU power settings, or guarantee longer battery life. Charge targets trigger alerts; they do not stop charging.
 
-Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. History and up to 50 recent battery session summaries are stored for seven days in the app’s Application Support directory. Battery readings stay local; the app contains no network requests or analytics.
+Hardware telemetry is model-dependent. Energy, health, charge-rate, and remaining-time values should be treated as estimates. Display preferences and alert settings are saved locally. The usage study stores up to seven days of bounded local summaries and reports restricted process access explicitly. History and up to 50 recent battery session summaries are stored for seven days in the app’s Application Support directory. Battery readings stay local; the app contains no network requests or analytics.
 
 ## Sessions and local history
 
@@ -137,6 +139,6 @@ The Power tab shows the current battery session, or the last completed session w
 
 The History tab stores minute averages and offers 1-hour, 24-hour, and 7-day timelines. Longer ranges combine averages using sample counts. Power-source changes, missing sensors, sleep, and app restarts create separate chart segments. Sleep, app downtime, and sampling gaps longer than 15 seconds are not included in energy totals. New sessions start after these interruptions because the app cannot know whether the charger changed while monitoring was paused.
 
-History is local JSON under the sandboxed app's `Application Support/BatteryMonitor/history-v1.json`. It contains numeric readings, timestamps, random chart/session IDs, and battery session summaries; it does not store serial numbers or raw registry data. Writes run on a background queue about once a minute and on session changes. Normal quit and sleep flush pending data; a force quit or crash can lose the last minute. Corrupt or unsupported history is reported and preserved until you choose **Settings → Clear local history**. Clearing history keeps appearance and alert preferences.
+History is local JSON under `Application Support/BatteryMonitor/history-v1.json`. Existing installations continue using their original container directory to preserve history and the SQLite study database; fresh installations use `~/Library/Application Support/BatteryMonitor`. It contains numeric readings, timestamps, random chart/session IDs, and battery session summaries; it does not store serial numbers or raw registry data. Writes run on a background queue about once a minute and on session changes. Normal quit and sleep flush pending data; a force quit or crash can lose the last minute. Corrupt or unsupported history is reported and preserved until you choose **Settings → Clear local history**. Clearing history keeps appearance and alert preferences.
 
 The live two-minute chart and its peak values cover the current app run; persisted charts show averages rather than individual one-second peaks. No readings are reconstructed while the app is closed.
